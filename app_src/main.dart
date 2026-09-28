@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const TapMineApp());
 
@@ -9,6 +10,7 @@ class TapMineApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'TapMine Rewards',
       theme: ThemeData.dark(useMaterial3: true),
       home: const HomeScreen(),
     );
@@ -25,14 +27,32 @@ class _HomeScreenState extends State<HomeScreen> {
   double points = 0;
   int hashrate = 100;
   bool boosted = false;
+  int boostLeft = 0;
   Timer? timer;
+  SharedPreferences? prefs;
 
   @override
   void initState() {
     super.initState();
+    _load();
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() => points += hashrate / 1000);
+      setState(() {
+        points += hashrate / 1000;
+        if (boosted) {
+          boostLeft--;
+          if (boostLeft <= 0) {
+            boosted = false;
+            hashrate = 100;
+          }
+        }
+      });
+      prefs?.setDouble('points', points);
     });
+  }
+
+  Future<void> _load() async {
+    prefs = await SharedPreferences.getInstance();
+    setState(() => points = prefs?.getDouble('points') ?? 0);
   }
 
   void boost() {
@@ -40,14 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       boosted = true;
       hashrate = 200;
-    });
-    Future.delayed(const Duration(seconds: 30), () {
-      if (mounted) {
-        setState(() {
-          boosted = false;
-          hashrate = 100;
-        });
-      }
+      boostLeft = 30;
     });
   }
 
@@ -78,7 +91,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ElevatedButton.icon(
                 onPressed: boosted ? null : boost,
                 icon: const Icon(Icons.bolt),
-                label: Text(boosted ? 'Boost active (2x)' : 'Boost 2x (30 sec)'),
+                label: Text(boosted
+                    ? 'Boost active: ${boostLeft}s'
+                    : 'Boost 2x (30 sec)'),
               ),
               const SizedBox(height: 32),
               const Text(
