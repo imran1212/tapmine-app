@@ -1,0 +1,16 @@
+workflows:
+  android-build:
+    name: Android Build
+    max_build_duration: 30
+    instance_type: linux_x2
+    environment:
+      flutter: stable
+    scripts:
+      - name: Create Flutter project
+        script: flutter create --org com.tapmine --project-name tapmine .
+      - name: Copy app code
+        script: cp app_src/main.dart lib/main.dart
+      - name: Build APK
+        script: flutter build apk --debug
+    artifacts:
+      - build/**/outputs/**/*.apk
