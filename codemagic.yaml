@@ -19,3 +19,10 @@ workflows:
         script: flutter build apk --release --split-per-abi
     artifacts:
       - build/**/outputs/**/*.apk
+      publishing:
+      email:
+        recipients:
+          - Muhammad.Emraan@gmail.com
+        notify:
+          success: true
+          failure: true
