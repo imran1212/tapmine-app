@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1000815020441",
+    "project_id": "tapmine-app",
+    "storage_bucket": "tapmine-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1000815020441:android:6e67da7e136bf5abaceb08",
+        "android_client_info": {
+          "package_name": "com.tapmine.tapmine"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDsOUui-GnbX_NuXqkMbYc6ygXP1F5GRxw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
