@@ -17,13 +17,10 @@ workflows:
             perl -pi -e 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
           fi
       - name: Add packages
-        script: flutter pub add firebase_core firebase_auth cloud_firestore share_plus google_mobile_ads
+        script: flutter pub add firebase_core firebase_auth cloud_firestore share_plus
       - name: Set app name
         script: |
           perl -pi -e 's/android:label="[^"]*"/android:label="TapMine Rewards"/' android/app/src/main/AndroidManifest.xml
-      - name: Add AdMob App ID
-        script: |
-          perl -pi -e 's#</application>#<meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-3940256099942544~3347511713"/></application>#' android/app/src/main/AndroidManifest.xml
       - name: Copy app code
         script: cp app_src/main.dart lib/main.dart
       - name: Build APK
