@@ -19,7 +19,11 @@ void main() async {
       storageBucket: "tapmine-app.firebasestorage.app",
     ),
   );
-  await MobileAds.instance.initialize();
+  try {
+    await MobileAds.instance.initialize();
+  } catch (e) {
+    // Ads na chalen to bhi app crash na ho
+  }
   runApp(const TapMineApp());
 }
 
@@ -68,22 +72,26 @@ class _RootScreenState extends State<RootScreen> {
 
   void _loadRewardedAd() {
     adLoading = true;
-    RewardedAd.load(
-      adUnitId: rewardedAdUnitId,
-      request: const AdRequest(),
-      rewardedAdLoadCallback: RewardedAdLoadCallback(
-        onAdLoaded: (ad) {
-          rewardedAd = ad;
-          adLoading = false;
-          if (mounted) setState(() {});
-        },
-        onAdFailedToLoad: (error) {
-          rewardedAd = null;
-          adLoading = false;
-          if (mounted) setState(() {});
-        },
-      ),
-    );
+    try {
+      RewardedAd.load(
+        adUnitId: rewardedAdUnitId,
+        request: const AdRequest(),
+        rewardedAdLoadCallback: RewardedAdLoadCallback(
+          onAdLoaded: (ad) {
+            rewardedAd = ad;
+            adLoading = false;
+            if (mounted) setState(() {});
+          },
+          onAdFailedToLoad: (error) {
+            rewardedAd = null;
+            adLoading = false;
+            if (mounted) setState(() {});
+          },
+        ),
+      );
+    } catch (e) {
+      adLoading = false;
+    }
   }
 
   Future<void> _signInAndLoad() async {
