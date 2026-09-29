@@ -26,24 +26,25 @@ class TapMineApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'TapMine Rewards',
       theme: ThemeData.dark(useMaterial3: true),
-      home: const HomeScreen(),
+      home: const RootScreen(),
     );
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class RootScreen extends StatefulWidget {
+  const RootScreen({super.key});
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<RootScreen> createState() => _RootScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _RootScreenState extends State<RootScreen> {
+  int tabIndex = 0;
+  String? uid;
   double points = 0;
   int hashrate = 100;
   bool boosted = false;
   int boostLeft = 0;
   Timer? timer;
-  String? uid;
   DocumentReference<Map<String, dynamic>>? userDoc;
   bool loading = true;
   int secondsSinceSave = 0;
@@ -114,45 +115,132 @@ class _HomeScreenState extends State<HomeScreen> {
     if (loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final screens = [
+      HomeTab(
+        hashrate: hashrate,
+        points: points,
+        uid: uid,
+        boosted: boosted,
+        boostLeft: boostLeft,
+        onBoost: boost,
+      ),
+      const LeaderboardTab(),
+    ];
     return Scaffold(
       appBar: AppBar(title: const Text('TapMine Rewards')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.memory, size: 90, color: Colors.amber),
-              const SizedBox(height: 16),
-              Text('$hashrate H/s',
-                  style: const TextStyle(
-                      fontSize: 32, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text('Points: ${points.toStringAsFixed(3)}',
-                  style: const TextStyle(fontSize: 22)),
-              const SizedBox(height: 8),
-              if (uid != null)
-                Text('ID: ${uid!.substring(0, 8)}',
-                    style:
-                        const TextStyle(fontSize: 11, color: Colors.grey)),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: boosted ? null : boost,
-                icon: const Icon(Icons.bolt),
-                label: Text(boosted
-                    ? 'Boost active: ${boostLeft}s'
-                    : 'Boost 2x (30 sec)'),
-              ),
-              const SizedBox(height: 32),
-              const Text(
-                'Ye ek rewards game hai. Is app mein real crypto mining nahi hoti.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
+      body: screens[tabIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tabIndex,
+        onDestinationSelected: (i) => setState(() => tabIndex = i),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.memory), label: 'Mining'),
+          NavigationDestination(
+              icon: Icon(Icons.leaderboard), label: 'Leaderboard'),
+        ],
+      ),
+    );
+  }
+}
+
+class HomeTab extends StatelessWidget {
+  final int hashrate;
+  final double points;
+  final String? uid;
+  final bool boosted;
+  final int boostLeft;
+  final VoidCallback onBoost;
+
+  const HomeTab({
+    super.key,
+    required this.hashrate,
+    required this.points,
+    required this.uid,
+    required this.boosted,
+    required this.boostLeft,
+    required this.onBoost,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.memory, size: 90, color: Colors.amber),
+            const SizedBox(height: 16),
+            Text('$hashrate H/s',
+                style: const TextStyle(
+                    fontSize: 32, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Points: ${points.toStringAsFixed(3)}',
+                style: const TextStyle(fontSize: 22)),
+            const SizedBox(height: 8),
+            if (uid != null)
+              Text('ID: ${uid!.substring(0, 8)}',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: boosted ? null : onBoost,
+              icon: const Icon(Icons.bolt),
+              label: Text(
+                  boosted ? 'Boost active: ${boostLeft}s' : 'Boost 2x (30 sec)'),
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'Ye ek rewards game hai. Is app mein real crypto mining nahi hoti.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class LeaderboardTab extends StatelessWidget {
+  const LeaderboardTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final myUid = FirebaseAuth.instance.currentUser?.uid;
+    final query = FirebaseFirestore.instance
+        .collection('users')
+        .orderBy('points', descending: true)
+        .limit(20);
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: query.snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const Center(child: Text('Abhi koi data nahi hai'));
+        }
+        final docs = snapshot.data!.docs;
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final doc = docs[index];
+            final pts = (doc.data()['points'] ?? 0).toDouble();
+            final isMe = doc.id == myUid;
+            return Card(
+              color: isMe ? Colors.amber.withOpacity(0.15) : null,
+              child: ListTile(
+                leading: CircleAvatar(child: Text('${index + 1}')),
+                title: Text(
+                    'User ${doc.id.substring(0, 8)}${isMe ? " (Aap)" : ""}'),
+                trailing: Text(pts.toStringAsFixed(2),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
