@@ -8,6 +8,14 @@ workflows:
     scripts:
       - name: Create Flutter project
         script: flutter create --org com.tapmine --project-name tapmine .
+      - name: Bump minSdkVersion for AdMob
+        script: |
+          if [ -f android/app/build.gradle.kts ]; then
+            perl -pi -e 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
+          fi
+          if [ -f android/app/build.gradle ]; then
+            perl -pi -e 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          fi
       - name: Add packages
         script: flutter pub add firebase_core firebase_auth cloud_firestore share_plus google_mobile_ads
       - name: Set app name
@@ -16,7 +24,6 @@ workflows:
       - name: Add AdMob App ID
         script: |
           perl -pi -e 's#</application>#<meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-3940256099942544~3347511713"/></application>#' android/app/src/main/AndroidManifest.xml
-          cat android/app/src/main/AndroidManifest.xml
       - name: Copy app code
         script: cp app_src/main.dart lib/main.dart
       - name: Build APK
