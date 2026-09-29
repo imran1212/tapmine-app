@@ -8,23 +8,67 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: "AIzaSyDsOUui-GnbX_NuXqkMbYc6ygXP1F5GRxw",
-      appId: "1:1000815020441:android:6e67da7e136bf5abaceb08",
-      messagingSenderId: "1000815020441",
-      projectId: "tapmine-app",
-      storageBucket: "tapmine-app.firebasestorage.app",
-    ),
-  );
-  try {
-    await MobileAds.instance.initialize();
-  } catch (e) {
-    // Ads na chalen to bhi app crash na ho
+class ErrorApp extends StatelessWidget {
+  final String message;
+  const ErrorApp({super.key, required this.message});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('Debug Error')),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: SelectableText(message,
+                style: const TextStyle(color: Colors.red, fontSize: 14)),
+          ),
+        ),
+      ),
+    );
   }
-  runApp(const TapMineApp());
+}
+
+void main() {
+  runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      return Material(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: SelectableText(
+                'Widget error:\n${details.exceptionAsString()}',
+                style: const TextStyle(color: Colors.red, fontSize: 14)),
+          ),
+        ),
+      );
+    };
+
+    try {
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: "AIzaSyDsOUui-GnbX_NuXqkMbYc6ygXP1F5GRxw",
+          appId: "1:1000815020441:android:6e67da7e136bf5abaceb08",
+          messagingSenderId: "1000815020441",
+          projectId: "tapmine-app",
+          storageBucket: "tapmine-app.firebasestorage.app",
+        ),
+      );
+    } catch (e, st) {
+      runApp(ErrorApp(message: 'Firebase init error:\n$e\n\n$st'));
+      return;
+    }
+
+    try {
+      await MobileAds.instance.initialize();
+    } catch (e) {
+      // Ads na chalen to bhi app crash na ho
+    }
+
+    runApp(const TapMineApp());
+  }, (error, stack) {
+    runApp(ErrorApp(message: 'Uncaught error:\n$error\n\n$stack'));
+  });
 }
 
 class TapMineApp extends StatelessWidget {
