@@ -4,6 +4,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+
+const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +19,7 @@ void main() async {
       storageBucket: "tapmine-app.firebasestorage.app",
     ),
   );
+  await MobileAds.instance.initialize();
   runApp(const TapMineApp());
 }
 
@@ -52,10 +56,34 @@ class _RootScreenState extends State<RootScreen> {
   bool loading = true;
   int secondsSinceSave = 0;
 
+  RewardedAd? rewardedAd;
+  bool adLoading = false;
+
   @override
   void initState() {
     super.initState();
     _signInAndLoad();
+    _loadRewardedAd();
+  }
+
+  void _loadRewardedAd() {
+    adLoading = true;
+    RewardedAd.load(
+      adUnitId: rewardedAdUnitId,
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          rewardedAd = ad;
+          adLoading = false;
+          if (mounted) setState(() {});
+        },
+        onAdFailedToLoad: (error) {
+          rewardedAd = null;
+          adLoading = false;
+          if (mounted) setState(() {});
+        },
+      ),
+    );
   }
 
   Future<void> _signInAndLoad() async {
@@ -102,11 +130,32 @@ class _RootScreenState extends State<RootScreen> {
     }
   }
 
-  void boost() {
-    setState(() {
-      boosted = true;
-      hashrate = 200;
-      boostLeft = 30;
+  void watchAdToBoost() {
+    if (rewardedAd == null) {
+      if (!adLoading) _loadRewardedAd();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ad tayyar nahi, dobara try karo')),
+      );
+      return;
+    }
+    final ad = rewardedAd!;
+    rewardedAd = null;
+    ad.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        _loadRewardedAd();
+      },
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        ad.dispose();
+        _loadRewardedAd();
+      },
+    );
+    ad.show(onUserEarnedReward: (ad, reward) {
+      setState(() {
+        boosted = true;
+        hashrate = 200;
+        boostLeft = 30;
+      });
     });
   }
 
@@ -133,13 +182,14 @@ class _RootScreenState extends State<RootScreen> {
       referredBy = code;
       points += 25;
     });
-    return null; // success
+    return null;
   }
 
   @override
   void dispose() {
     timer?.cancel();
     userDoc?.update({'points': points});
+    rewardedAd?.dispose();
     super.dispose();
   }
 
@@ -156,7 +206,7 @@ class _RootScreenState extends State<RootScreen> {
         referredBy: referredBy,
         boosted: boosted,
         boostLeft: boostLeft,
-        onBoost: boost,
+        onBoost: watchAdToBoost,
         onApplyReferral: applyReferral,
       ),
       const LeaderboardTab(),
@@ -230,10 +280,10 @@ class _HomeTabState extends State<HomeTab> {
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: widget.boosted ? null : widget.onBoost,
-            icon: const Icon(Icons.bolt),
+            icon: const Icon(Icons.play_circle),
             label: Text(widget.boosted
                 ? 'Boost active: ${widget.boostLeft}s'
-                : 'Boost 2x (30 sec)'),
+                : 'Ad dekho, 2x Boost pao (30 sec)'),
           ),
           const SizedBox(height: 32),
           const Divider(),
