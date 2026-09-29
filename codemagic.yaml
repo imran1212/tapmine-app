@@ -9,7 +9,7 @@ workflows:
       - name: Create Flutter project
         script: flutter create --org com.tapmine --project-name tapmine .
       - name: Add packages
-        script: flutter pub add firebase_core firebase_auth cloud_firestore
+        script: flutter pub add firebase_core firebase_auth cloud_firestore share_plus
       - name: Set app name
         script: |
           perl -pi -e 's/android:label="[^"]*"/android:label="TapMine Rewards"/' android/app/src/main/AndroidManifest.xml
