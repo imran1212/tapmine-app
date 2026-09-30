@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'home_screen.dart';
 
+// --- Global Colors for Theme ---
+const bgDark = Color(0xFF0B0E14);
+const cardDark = Color(0xFF161B26);
+const amber = Color(0xFFFFC94D);
+
 final GlobalKey<ScaffoldMessengerState> messengerKey =
     GlobalKey<ScaffoldMessengerState>();
 
