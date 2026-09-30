@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
+
+import 'models_and_constants.dart';
 
 final GlobalKey<ScaffoldMessengerState> messengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -22,13 +25,6 @@ void main() async {
   runApp(const TapMineApp());
 }
 
-const bgDark = Color(0xFF0B0E14);
-const cardDark = Color(0xFF161B26);
-const amber = Color(0xFFFFC94D);
-const purple = Color(0xFF8B5CF6);
-const green = Color(0xFF34D399);
-const red = Color(0xFFF87171);
-
 class TapMineApp extends StatelessWidget {
   const TapMineApp({super.key});
   @override
@@ -36,7 +32,7 @@ class TapMineApp extends StatelessWidget {
     return MaterialApp(
       scaffoldMessengerKey: messengerKey,
       debugShowCheckedModeBanner: false,
-      title: 'TapMine Rewards',
+      title: 'TapMine Rewards Pro',
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         scaffoldBackgroundColor: bgDark,
         colorScheme: ColorScheme.fromSeed(
@@ -63,71 +59,6 @@ class TapMineApp extends StatelessWidget {
   }
 }
 
-class Package {
-  final String id;
-  final String title;
-  final String subtitle;
-  final int cost;
-  final double multiplier;
-  final Duration duration;
-  final IconData icon;
-  final Color color;
-  const Package(this.id, this.title, this.subtitle, this.cost, this.multiplier,
-      this.duration, this.icon, this.color);
-}
-
-const packages = [
-  Package('daily', 'Daily Booster', '24 ghante · 1.5x', 500, 1.5,
-      Duration(hours: 24), Icons.wb_sunny_rounded, Color(0xFF34D399)),
-  Package('weekly', 'Weekly Booster', '7 din · 2x', 3000, 2.0,
-      Duration(days: 7), Icons.rocket_launch_rounded, Color(0xFF60A5FA)),
-  Package('monthly', 'Monthly Booster', '30 din · 3x', 10000, 3.0,
-      Duration(days: 30), Icons.diamond_rounded, Color(0xFFF472B6)),
-];
-
-class BoostStage {
-  final double multiplier;
-  final int seconds;
-  final Color color;
-  const BoostStage(this.multiplier, this.seconds, this.color);
-}
-
-const boostChain = [
-  BoostStage(1.5, 120, Color(0xFF34D399)),
-  BoostStage(2.0, 90, Color(0xFF60A5FA)),
-  BoostStage(3.5, 60, Color(0xFFF472B6)),
-  BoostStage(5.0, 30, Color(0xFFFB923C)),
-];
-
-const streakBonusTable = [50, 100, 150, 200, 300, 400, 500];
-
-class Achievement {
-  final String id;
-  final String title;
-  final String desc;
-  final int bonus;
-  final IconData icon;
-  final Color color;
-  final bool Function(double lifetimePoints, int referralCount, int streakCount) check;
-  const Achievement(this.id, this.title, this.desc, this.bonus, this.icon,
-      this.color, this.check);
-}
-
-final achievementsList = [
-  Achievement('points_1000', 'Rising Miner', '1000 lifetime points kamao', 200,
-      Icons.trending_up, const Color(0xFF34D399), (lp, rc, sc) => lp >= 1000),
-  Achievement('points_5000', 'Power Miner', '5000 lifetime points kamao', 500,
-      Icons.flash_on, const Color(0xFF60A5FA), (lp, rc, sc) => lp >= 5000),
-  Achievement('points_20000', 'Mining Legend', '20000 lifetime points kamao', 2000,
-      Icons.workspace_premium, const Color(0xFFF472B6), (lp, rc, sc) => lp >= 20000),
-  Achievement('referrals_1', 'First Friend', '1 dost refer karo', 100,
-      Icons.person_add, purple, (lp, rc, sc) => rc >= 1),
-  Achievement('referrals_5', 'Community Builder', '5 dost refer karo', 1000,
-      Icons.groups, const Color(0xFFFB923C), (lp, rc, sc) => rc >= 5),
-  Achievement('streak_7', 'Consistent Miner', '7 din lagatar app kholo', 500,
-      Icons.local_fire_department, const Color(0xFFEF4444), (lp, rc, sc) => sc >= 7),
-];
-
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
   @override
@@ -140,6 +71,8 @@ class _RootScreenState extends State<RootScreen> {
   String? shortId;
   String? referredBy;
   double points = 0;
+  double unclaimedPoints = 0;
+  double maxStorageCap = 100.0;
   double lifetimePoints = 0;
   int referralCount = 0;
   int streakCount = 0;
@@ -152,6 +85,9 @@ class _RootScreenState extends State<RootScreen> {
   int chainStage = 0;
   int chainSecondsLeft = 0;
   bool chainActive = false;
+
+  int adsWatchedToday = 0;
+  final int adsTargetForMegaBoost = 5;
 
   Timer? timer;
   DocumentReference<Map<String, dynamic>>? userDoc;
@@ -184,10 +120,12 @@ class _RootScreenState extends State<RootScreen> {
       if (snap.exists) {
         final data = snap.data()!;
         points = (data['points'] ?? 0).toDouble();
+        unclaimedPoints = (data['unclaimedPoints'] ?? 0).toDouble();
         lifetimePoints = (data['lifetimePoints'] ?? points).toDouble();
         referredBy = data['referredBy'];
         referralCount = (data['referralCount'] ?? 0) as int;
         streakCount = (data['streakCount'] ?? 0) as int;
+        adsWatchedToday = (data['adsWatchedToday'] ?? 0) as int;
         claimedAchievements =
             ((data['claimedAchievements'] as List?) ?? []).cast<String>().toSet();
         final mult = (data['packageMultiplier'] ?? 1.0).toDouble();
@@ -196,7 +134,6 @@ class _RootScreenState extends State<RootScreen> {
           packageMultiplier = mult;
           packageExpiresAt = expiresTs.toDate();
         }
-
         DateTime? lastDate;
         if (data['lastLoginDate'] is Timestamp) {
           final d = (data['lastLoginDate'] as Timestamp).toDate();
@@ -208,6 +145,7 @@ class _RootScreenState extends State<RootScreen> {
           } else {
             streakCount = 1;
           }
+          adsWatchedToday = 0;
           final bonus = streakBonusTable[(streakCount - 1) % 7];
           dailyBonus = bonus;
           points += bonus;
@@ -215,6 +153,7 @@ class _RootScreenState extends State<RootScreen> {
           await userDoc!.update({
             'lastLoginDate': Timestamp.fromDate(todayDate),
             'streakCount': streakCount,
+            'adsWatchedToday': 0,
             'points': points,
             'lifetimePoints': lifetimePoints,
           });
@@ -226,10 +165,12 @@ class _RootScreenState extends State<RootScreen> {
         lifetimePoints = points;
         await userDoc!.set({
           'points': points,
+          'unclaimedPoints': 0.0,
           'lifetimePoints': lifetimePoints,
           'shortId': shortId,
           'referredBy': null,
           'referralCount': 0,
+          'adsWatchedToday': 0,
           'packageMultiplier': 1.0,
           'packageExpiresAt': null,
           'streakCount': streakCount,
@@ -239,7 +180,7 @@ class _RootScreenState extends State<RootScreen> {
         });
       }
     } catch (e) {
-      // Internet na ho to bhi app local chalti rahe
+      // Offline support
     }
     if (!mounted) return;
     setState(() => loading = false);
@@ -260,9 +201,11 @@ class _RootScreenState extends State<RootScreen> {
 
   void _tick() {
     setState(() {
-      final earned = displayHashrate / 1000;
-      points += earned;
-      lifetimePoints += earned;
+      if (unclaimedPoints < maxStorageCap) {
+        final earned = displayHashrate / 1000;
+        unclaimedPoints = min(maxStorageCap, unclaimedPoints + earned);
+      }
+
       if (chainActive) {
         chainSecondsLeft--;
         if (chainSecondsLeft <= 0) {
@@ -279,8 +222,35 @@ class _RootScreenState extends State<RootScreen> {
     secondsSinceSave++;
     if (secondsSinceSave >= 5) {
       secondsSinceSave = 0;
-      userDoc?.update({'points': points, 'lifetimePoints': lifetimePoints});
+      userDoc?.update({
+        'points': points,
+        'unclaimedPoints': unclaimedPoints,
+        'lifetimePoints': lifetimePoints,
+        'adsWatchedToday': adsWatchedToday,
+      });
     }
+  }
+
+  void claimMiningPoints(bool doubleReward) {
+    if (unclaimedPoints <= 0) return;
+    final gained = doubleReward ? unclaimedPoints * 2 : unclaimedPoints;
+    setState(() {
+      points += gained;
+      lifetimePoints += gained;
+      unclaimedPoints = 0;
+    });
+    userDoc?.update({
+      'points': points,
+      'unclaimedPoints': 0,
+      'lifetimePoints': lifetimePoints,
+    });
+    messengerKey.currentState?.showSnackBar(
+      SnackBar(
+        backgroundColor: cardDark,
+        content: Text(
+            '${doubleReward ? "🎉 2x Claimed!" : "✅ Claimed"} +${gained.toStringAsFixed(2)} pts'),
+      ),
+    );
   }
 
   void watchAdForNextStage() {
@@ -289,7 +259,31 @@ class _RootScreenState extends State<RootScreen> {
       chainStage += 1;
       chainSecondsLeft = boostChain[chainStage - 1].seconds;
       chainActive = true;
+      adsWatchedToday++;
     });
+    _checkMegaBoostReward();
+  }
+
+  void _checkMegaBoostReward() {
+    if (adsWatchedToday >= adsTargetForMegaBoost) {
+      final expiry = DateTime.now().add(const Duration(hours: 2));
+      setState(() {
+        packageMultiplier = 3.0;
+        packageExpiresAt = expiry;
+        adsWatchedToday = 0;
+      });
+      userDoc?.update({
+        'packageMultiplier': 3.0,
+        'packageExpiresAt': Timestamp.fromDate(expiry),
+        'adsWatchedToday': 0,
+      });
+      messengerKey.currentState?.showSnackBar(
+        const SnackBar(
+          backgroundColor: purple,
+          content: Text('🚀 5 Ads Complete! 3x Mega Multiplier activated for 2 hours!'),
+        ),
+      );
+    }
   }
 
   Future<String?> buyPackage(Package pkg) async {
@@ -355,10 +349,22 @@ class _RootScreenState extends State<RootScreen> {
     });
   }
 
+  void addBonusPoints(double amount) {
+    setState(() {
+      points += amount;
+      lifetimePoints += amount;
+    });
+    userDoc?.update({'points': points, 'lifetimePoints': lifetimePoints});
+  }
+
   @override
   void dispose() {
     timer?.cancel();
-    userDoc?.update({'points': points, 'lifetimePoints': lifetimePoints});
+    userDoc?.update({
+      'points': points,
+      'unclaimedPoints': unclaimedPoints,
+      'lifetimePoints': lifetimePoints
+    });
     super.dispose();
   }
 
@@ -374,6 +380,8 @@ class _RootScreenState extends State<RootScreen> {
       HomeTab(
         hashrate: displayHashrate,
         points: points,
+        unclaimedPoints: unclaimedPoints,
+        maxStorageCap: maxStorageCap,
         shortId: shortId,
         referredBy: referredBy,
         chainStage: chainStage,
@@ -381,9 +389,13 @@ class _RootScreenState extends State<RootScreen> {
         chainSecondsLeft: chainSecondsLeft,
         packageMultiplier: packageMultiplier,
         packageExpiresAt: packageExpiresAt,
+        adsWatchedToday: adsWatchedToday,
+        adsTargetForMegaBoost: adsTargetForMegaBoost,
         onWatchAd: watchAdForNextStage,
+        onClaimPoints: claimMiningPoints,
         onApplyReferral: applyReferral,
       ),
+      SpinWheelTab(onRewardWon: addBonusPoints),
       PackagesTab(
         points: points,
         activeMultiplier: packageMultiplier,
@@ -396,6 +408,11 @@ class _RootScreenState extends State<RootScreen> {
         referralCount: referralCount,
         claimedAchievements: claimedAchievements,
         onClaim: claimAchievement,
+        onWatchAdForBonus: () {
+          addBonusPoints(50);
+          setState(() => adsWatchedToday++);
+          _checkMegaBoostReward();
+        },
       ),
       const LeaderboardTab(),
     ];
@@ -417,11 +434,13 @@ class _RootScreenState extends State<RootScreen> {
         onDestinationSelected: (i) => setState(() => tabIndex = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.memory_outlined), label: 'Mining'),
+          NavigationDestination(
+              icon: Icon(Icons.stars_outlined), label: 'Spin & Win'),
           NavigationDestination(icon: Icon(Icons.bolt_outlined), label: 'Packages'),
           NavigationDestination(
-              icon: Icon(Icons.emoji_events_outlined), label: 'Rewards'),
+              icon: Icon(Icons.emoji_events_outlined), label: 'Quests'),
           NavigationDestination(
-              icon: Icon(Icons.leaderboard_outlined), label: 'Leaderboard'),
+              icon: Icon(Icons.leaderboard_outlined), label: 'Ranks'),
         ],
       ),
     );
@@ -431,6 +450,8 @@ class _RootScreenState extends State<RootScreen> {
 class HomeTab extends StatefulWidget {
   final int hashrate;
   final double points;
+  final double unclaimedPoints;
+  final double maxStorageCap;
   final String? shortId;
   final String? referredBy;
   final int chainStage;
@@ -438,13 +459,18 @@ class HomeTab extends StatefulWidget {
   final int chainSecondsLeft;
   final double packageMultiplier;
   final DateTime? packageExpiresAt;
+  final int adsWatchedToday;
+  final int adsTargetForMegaBoost;
   final VoidCallback onWatchAd;
+  final Function(bool doubleIt) onClaimPoints;
   final Future<String?> Function(String code) onApplyReferral;
 
   const HomeTab({
     super.key,
     required this.hashrate,
     required this.points,
+    required this.unclaimedPoints,
+    required this.maxStorageCap,
     required this.shortId,
     required this.referredBy,
     required this.chainStage,
@@ -452,7 +478,10 @@ class HomeTab extends StatefulWidget {
     required this.chainSecondsLeft,
     required this.packageMultiplier,
     required this.packageExpiresAt,
+    required this.adsWatchedToday,
+    required this.adsTargetForMegaBoost,
     required this.onWatchAd,
+    required this.onClaimPoints,
     required this.onApplyReferral,
   });
 
@@ -474,17 +503,34 @@ class _HomeTabState extends State<HomeTab> {
   @override
   Widget build(BuildContext context) {
     final atFinalStage = widget.chainStage >= boostChain.length;
-    final canWatchNext = !widget.chainActive && !(atFinalStage);
+    final canWatchNext = !widget.chainActive && !atFinalStage;
     Color stageColor =
         widget.chainStage >= 1 ? boostChain[widget.chainStage - 1].color : amber;
+    final storageFull = widget.unclaimedPoints >= widget.maxStorageCap;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
       child: Column(
         children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Wallet Balance:',
+                      style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey)),
+                  Text('${widget.points.toStringAsFixed(2)} pts',
+                      style: const TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.bold, color: amber)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               gradient: LinearGradient(
@@ -497,52 +543,104 @@ class _HomeTabState extends State<HomeTab> {
             child: Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                       shape: BoxShape.circle, color: stageColor.withOpacity(0.15)),
-                  child: Icon(Icons.memory, size: 56, color: stageColor),
+                  child: Icon(Icons.memory, size: 52, color: stageColor),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 12),
                 Text('${widget.hashrate} H/s',
                     style: const TextStyle(
-                        fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
-                const SizedBox(height: 6),
-                Text('${widget.points.toStringAsFixed(3)} pts',
-                    style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.white.withOpacity(0.85),
-                        fontWeight: FontWeight.w600)),
-                if (widget.shortId != null) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text('ID: ${widget.shortId}',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.black38,
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                ],
-                if (widget.packageMultiplier > 1.0 &&
-                    widget.packageExpiresAt != null) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: green.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: green.withOpacity(0.4)),
-                    ),
-                    child: Text(
-                      '📦 ${widget.packageMultiplier}x package · '
-                      '${widget.packageExpiresAt!.day}/${widget.packageExpiresAt!.month} tak',
-                      style: const TextStyle(
-                          fontSize: 12, color: green, fontWeight: FontWeight.w600),
-                    ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(storageFull ? '⚠️ Storage Full!' : 'Unclaimed Storage:',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: storageFull ? red : Colors.grey)),
+                          Text(
+                            '${widget.unclaimedPoints.toStringAsFixed(2)} / ${widget.maxStorageCap.toInt()} pts',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                        value: widget.unclaimedPoints / widget.maxStorageCap,
+                        color: storageFull ? red : green,
+                        backgroundColor: Colors.white10,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: widget.unclaimedPoints > 0
+                                  ? () => widget.onClaimPoints(false)
+                                  : null,
+                              child: const Text('Claim 1x'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor: green,
+                                  foregroundColor: Colors.black),
+                              onPressed: widget.unclaimedPoints > 0
+                                  ? () => widget.onClaimPoints(true)
+                                  : null,
+                              icon: const Icon(Icons.play_circle_fill, size: 16),
+                              label: const Text('Claim 2x (Ad)',
+                                  style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                        ],
+                      )
+                    ],
                   ),
-                ],
-                const SizedBox(height: 22),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: cardDark,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: amber.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('🚀 Daily 3x Mega Boost Quest',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          Text('${widget.adsWatchedToday}/${widget.adsTargetForMegaBoost} Ads',
+                              style: const TextStyle(
+                                  fontSize: 12, color: amber, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      LinearProgressIndicator(
+                        value: widget.adsWatchedToday / widget.adsTargetForMegaBoost,
+                        color: amber,
+                        backgroundColor: Colors.white10,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
                 if (widget.chainActive) ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -561,222 +659,216 @@ class _HomeTabState extends State<HomeTab> {
                   ),
                   const SizedBox(height: 6),
                   Text(_fmt(widget.chainSecondsLeft),
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: LinearProgressIndicator(
-                      value: widget.chainSecondsLeft /
-                          boostChain[widget.chainStage - 1].seconds,
-                      minHeight: 8,
-                      backgroundColor: Colors.white.withOpacity(0.08),
-                      valueColor: AlwaysStoppedAnimation(stageColor),
-                    ),
-                  ),
-                  if (widget.chainStage < boostChain.length) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      'Agla: ${boostChain[widget.chainStage].multiplier}x '
-                      '(${_fmt(boostChain[widget.chainStage].seconds)}) — khatam hote hi ad dekh kar unlock karo',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Ye aakhri stage hai! Khatam hone par chain reset ho jayegi.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ],
-                ] else if (canWatchNext) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: boostChain[widget.chainStage].color,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        textStyle:
-                            const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                      onPressed: widget.onWatchAd,
-                      icon: const Icon(Icons.play_circle_fill),
-                      label: Text(widget.chainStage == 0
-                          ? 'Ad dekho — ${boostChain[0].multiplier}x '
-                              '(${_fmt(boostChain[0].seconds)}) shuru karo'
-                          : 'Ad dekho — ${boostChain[widget.chainStage].multiplier}x '
-                              '(${_fmt(boostChain[widget.chainStage].seconds)}) unlock karo'),
-                    ),
-                  ),
-                  if (widget.chainStage > 0) ...[
-                    const SizedBox(height: 8),
-                    Text('${widget.chainStage}/${boostChain.length} stages complete kiye',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                  ],
-                ] else ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      '🎉 Poori chain complete! Dobara shuru karne ke liye niche dekho',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ),
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: cardDark,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: purple.withOpacity(0.25)),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.card_giftcard_rounded, color: purple, size: 20),
-                    SizedBox(width: 8),
-                    Text('Apna referral code share karo',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: purple.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(widget.shortId ?? '',
-                      style: const TextStyle(
-                          fontSize: 20,
-                          letterSpacing: 3,
-                          fontWeight: FontWeight.bold,
-                          color: purple)),
-                ),
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: purple,
-                    side: BorderSide(color: purple.withOpacity(0.5)),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    shape:
-                        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: canWatchNext ? amber : cardDark,
+                      foregroundColor: canWatchNext ? Colors.black : Colors.white38,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: canWatchNext ? widget.onWatchAd : null,
+                    icon: const Icon(Icons.play_circle_fill),
+                    label: Text(
+                      atFinalStage
+                          ? 'Max Boost Active'
+                          : widget.chainActive
+                              ? 'Boost Active...'
+                              : 'Watch Ad for Stage ${widget.chainStage + 1} Boost',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  onPressed: () {
-                    Share.share(
-                        'TapMine Rewards mein mere saath join karo! Mera referral code: ${widget.shortId}');
-                  },
-                  icon: const Icon(Icons.share, size: 18),
-                  label: const Text('Code share karo'),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(18),
-            decoration:
-                BoxDecoration(color: cardDark, borderRadius: BorderRadius.circular(20)),
-            child: widget.referredBy != null
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Referral Program',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  const Text('Mera Code Share Karo (+50 pts for you):',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 10),
+                  Row(
                     children: [
-                      const Icon(Icons.check_circle, color: green, size: 18),
-                      const SizedBox(width: 8),
-                      Text('Referral code lag chuka hai: ${widget.referredBy}',
-                          style: const TextStyle(color: green)),
-                    ],
-                  )
-                : Column(
-                    children: [
-                      const Text('Kisi ka referral code hai to yahan lagao',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: codeController,
-                        textCapitalization: TextCapitalization.characters,
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: bgDark,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black26,
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          hintText: 'Referral code',
+                          child: Text(widget.shortId ?? '...',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: purple,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        style: IconButton.styleFrom(backgroundColor: amber),
+                        onPressed: () {
+                          if (widget.shortId != null) {
+                            Share.share('Mera TapMine referral code istemal karein: ${widget.shortId}');
+                          }
+                        },
+                        icon: const Icon(Icons.share, color: Colors.black),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (widget.referredBy == null) ...[
+                    const Text('Kisi ka referral code lagayein (+25 pts):',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: codeController,
+                            decoration: const InputDecoration(
+                              hintText: 'Enter code',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
                           onPressed: applying
                               ? null
                               : () async {
-                                  setState(() {
-                                    applying = true;
-                                    message = null;
-                                  });
-                                  final err = await widget
-                                      .onApplyReferral(codeController.text);
+                                  setState(() => applying = true);
+                                  final err = await widget.onApplyReferral(codeController.text);
                                   setState(() {
                                     applying = false;
-                                    message = err ?? 'Bonus points mil gaye!';
+                                    message = err ?? 'Code apply ho gaya!';
                                   });
                                 },
                           child: applying
                               ? const SizedBox(
-                                  height: 16,
                                   width: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white))
-                              : const Text('Apply karo'),
-                        ),
-                      ),
-                      if (message != null) ...[
-                        const SizedBox(height: 8),
-                        Text(message!,
-                            style: TextStyle(
-                                color: message == 'Bonus points mil gaye!'
-                                    ? green
-                                    : red)),
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Text('Apply'),
+                        )
                       ],
-                    ],
-                  ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            'Ye ek rewards game hai. Is app mein real crypto mining nahi hoti.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-          ),
+                    ),
+                    if (message != null) ...[
+                      const SizedBox(height: 6),
+                      Text(message!,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: message!.contains('apply') ? green : red)),
+                    ]
+                  ] else ...[
+                    Text('Referred by: ${widget.referredBy}',
+                        style: const TextStyle(fontSize: 12, color: green)),
+                  ]
+                ],
+              ),
+            ),
+          )
         ],
       ),
     );
   }
 }
 
-class PackagesTab extends StatefulWidget {
+class SpinWheelTab extends StatefulWidget {
+  final Function(double bonus) onRewardWon;
+  const SpinWheelTab({super.key, required this.onRewardWon});
+
+  @override
+  State<SpinWheelTab> createState() => _SpinWheelTabState();
+}
+
+class _SpinWheelTabState extends State<SpinWheelTab> {
+  bool isSpinning = false;
+  double lastWon = 0;
+
+  void spinWheel() {
+    setState(() => isSpinning = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      final rewards = [50.0, 100.0, 150.0, 250.0, 500.0];
+      final won = rewards[Random().nextInt(rewards.length)];
+      widget.onRewardWon(won);
+      if (!mounted) return;
+      setState(() {
+        isSpinning = false;
+        lastWon = won;
+      });
+      messengerKey.currentState?.showSnackBar(
+        SnackBar(
+          backgroundColor: purple,
+          content: Text('🎉 Spin Reward: +$won Points!'),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(32),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: purple.withOpacity(0.15),
+                border: Border.all(color: purple, width: 4),
+              ),
+              child: const Icon(Icons.stars_rounded, size: 100, color: amber),
+            ),
+            const SizedBox(height: 24),
+            const Text('Lucky Ad Spin Wheel',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text('Ad dekhein aur jackpot rewards win karein!',
+                style: TextStyle(color: Colors.grey, fontSize: 13)),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: amber,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              ),
+              onPressed: isSpinning ? null : spinWheel,
+              icon: isSpinning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.play_circle_fill),
+              label: Text(isSpinning ? 'Spinning...' : 'Watch Ad to Spin'),
+            ),
+            if (lastWon > 0) ...[
+              const SizedBox(height: 20),
+              Text('Last Win: +$lastWon Points',
+                  style: const TextStyle(color: green, fontWeight: FontWeight.bold)),
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PackagesTab extends StatelessWidget {
   final double points;
   final double activeMultiplier;
   final DateTime? activeExpiresAt;
@@ -791,117 +883,66 @@ class PackagesTab extends StatefulWidget {
   });
 
   @override
-  State<PackagesTab> createState() => _PackagesTabState();
-}
-
-class _PackagesTabState extends State<PackagesTab> {
-  bool buying = false;
-  String? message;
-
-  @override
   Widget build(BuildContext context) {
-    return ListView(
+    return ListView.builder(
       padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            gradient:
-                LinearGradient(colors: [amber.withOpacity(0.2), purple.withOpacity(0.1)]),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Column(
-            children: [
-              const Text('Aapke Points', style: TextStyle(color: Colors.grey, fontSize: 13)),
-              const SizedBox(height: 4),
-              Text(widget.points.toStringAsFixed(2),
-                  style: const TextStyle(
-                      fontSize: 28, fontWeight: FontWeight.bold, color: amber)),
-              if (widget.activeMultiplier > 1.0 && widget.activeExpiresAt != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    '📦 Active: ${widget.activeMultiplier}x · '
-                    '${widget.activeExpiresAt!.day}/${widget.activeExpiresAt!.month}/${widget.activeExpiresAt!.year} tak',
-                    style: const TextStyle(color: green, fontSize: 12),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        if (message != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(message!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.orangeAccent)),
-          ),
-        for (final pkg in packages)
-          Container(
-            margin: const EdgeInsets.only(bottom: 14),
+      itemCount: packages.length,
+      itemBuilder: (context, i) {
+        final pkg = packages[i];
+        final canAfford = points >= pkg.cost;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Padding(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: cardDark,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: pkg.color.withOpacity(0.3)),
-            ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration:
-                      BoxDecoration(color: pkg.color.withOpacity(0.15), shape: BoxShape.circle),
-                  child: Icon(pkg.icon, color: pkg.color, size: 26),
+                CircleAvatar(
+                  backgroundColor: pkg.color.withOpacity(0.2),
+                  child: Icon(pkg.icon, color: pkg.color),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(pkg.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                      const SizedBox(height: 2),
-                      Text(pkg.subtitle, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text(pkg.subtitle,
+                          style: const TextStyle(fontSize: 12, color: Colors.grey)),
                       const SizedBox(height: 4),
-                      Text('${pkg.cost} points',
-                          style: TextStyle(
-                              color: pkg.color, fontWeight: FontWeight.w600, fontSize: 13)),
+                      Text('${pkg.cost} pts',
+                          style: const TextStyle(
+                              color: amber, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: pkg.color,
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    backgroundColor: canAfford ? amber : Colors.grey.shade800,
+                    foregroundColor: canAfford ? Colors.black : Colors.white38,
                   ),
-                  onPressed: buying
-                      ? null
-                      : () async {
-                          setState(() {
-                            buying = true;
-                            message = null;
-                          });
-                          final err = await widget.onBuy(pkg);
-                          setState(() {
-                            buying = false;
-                            message = err ?? 'Package activate ho gaya!';
-                          });
-                        },
-                  child: const Text('Khareedo'),
+                  onPressed: canAfford
+                      ? () async {
+                          final res = await onBuy(pkg);
+                          if (res != null) {
+                            messengerKey.currentState?.showSnackBar(
+                              SnackBar(content: Text(res)),
+                            );
+                          } else {
+                            messengerKey.currentState?.showSnackBar(
+                              SnackBar(content: Text('${pkg.title} active ho gaya!')),
+                            );
+                          }
+                        }
+                      : null,
+                  child: const Text('Buy'),
                 ),
               ],
             ),
           ),
-        const SizedBox(height: 8),
-        Text(
-          'Ye points-based packages hain, real paisa nahi lagta. Real-money packages Play Store launch ke baad add honge.',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -911,7 +952,8 @@ class RewardsTab extends StatelessWidget {
   final double lifetimePoints;
   final int referralCount;
   final Set<String> claimedAchievements;
-  final Future<void> Function(Achievement ach) onClaim;
+  final Function(Achievement ach) onClaim;
+  final VoidCallback onWatchAdForBonus;
 
   const RewardsTab({
     super.key,
@@ -920,129 +962,81 @@ class RewardsTab extends StatelessWidget {
     required this.referralCount,
     required this.claimedAchievements,
     required this.onClaim,
+    required this.onWatchAdForBonus,
   });
 
   @override
   Widget build(BuildContext context) {
-    final nextBonus = streakBonusTable[streakCount % 7];
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-                colors: [Color(0xFFEF4444), Color(0xFFFB923C)]),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            children: [
-              const Icon(Icons.local_fire_department, color: Colors.white, size: 40),
-              const SizedBox(height: 8),
-              Text('$streakCount Din Streak',
-                  style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 4),
-              Text('Kal wapas aao: +$nextBonus points',
-                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
-        const Text('Achievements',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
-        for (final ach in achievementsList)
-          _AchievementCard(
-            achievement: ach,
-            unlocked: ach.check(lifetimePoints, referralCount, streakCount),
-            claimed: claimedAchievements.contains(ach.id),
-            onClaim: () => onClaim(ach),
-          ),
-      ],
-    );
-  }
-}
-
-class _AchievementCard extends StatelessWidget {
-  final Achievement achievement;
-  final bool unlocked;
-  final bool claimed;
-  final VoidCallback onClaim;
-
-  const _AchievementCard({
-    required this.achievement,
-    required this.unlocked,
-    required this.claimed,
-    required this.onClaim,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final ach = achievement;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: cardDark,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: claimed
-                ? green.withOpacity(0.4)
-                : (unlocked ? ach.color.withOpacity(0.5) : Colors.white.withOpacity(0.08))),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: (claimed ? green : ach.color)
-                  .withOpacity(unlocked || claimed ? 0.18 : 0.06),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              claimed ? Icons.check_circle : ach.icon,
-              color: claimed ? green : (unlocked ? ach.color : Colors.grey),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(ach.title,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: unlocked || claimed ? Colors.white : Colors.grey)),
-                const SizedBox(height: 2),
-                Text(ach.desc, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 2),
-                Text('+${ach.bonus} points',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: ach.color,
-                        fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    const Icon(Icons.local_fire_department, color: red),
+                    const SizedBox(width: 8),
+                    Text('Daily Streak: $streakCount Days',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Bonus for today: +${streakBonusTable[(streakCount - 1) % 7]} pts',
+                  style: const TextStyle(color: green, fontSize: 13),
+                ),
               ],
             ),
           ),
-          if (claimed)
-            const Icon(Icons.check_circle, color: green)
-          else if (unlocked)
-            ElevatedButton(
+        ),
+        const SizedBox(height: 12),
+        Card(
+          color: purple.withOpacity(0.15),
+          child: ListTile(
+            leading: const Icon(Icons.ondemand_video, color: amber),
+            title: const Text('Watch Ad Quest (+50 Pts)',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Quick bonus points for watching video ad'),
+            trailing: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: ach.color,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: onClaim,
-              child: const Text('Claim'),
-            )
-          else
-            const Icon(Icons.lock_outline, color: Colors.grey, size: 20),
-        ],
-      ),
+                  backgroundColor: amber, foregroundColor: Colors.black),
+              onPressed: onWatchAdForBonus,
+              child: const Text('Watch'),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text('Achievements',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        ...achievementsList.map((ach) {
+          final isClaimed = claimedAchievements.contains(ach.id);
+          final canClaim =
+              !isClaimed && ach.check(lifetimePoints, referralCount, streakCount);
+
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              leading: Icon(ach.icon, color: ach.color),
+              title: Text(ach.title,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('${ach.desc}\nReward: +${ach.bonus} pts',
+                  style: const TextStyle(fontSize: 12)),
+              trailing: isClaimed
+                  ? const Icon(Icons.check_circle, color: green)
+                  : ElevatedButton(
+                      onPressed: canClaim ? () => onClaim(ach) : null,
+                      child: const Text('Claim'),
+                    ),
+            ),
+          );
+        }).toList(),
+      ],
     );
   }
 }
@@ -1050,76 +1044,52 @@ class _AchievementCard extends StatelessWidget {
 class LeaderboardTab extends StatelessWidget {
   const LeaderboardTab({super.key});
 
-  static const medalColors = [Color(0xFFFFD700), Color(0xFFC0C0C0), Color(0xFFCD7F32)];
-
   @override
   Widget build(BuildContext context) {
-    final myUid = FirebaseAuth.instance.currentUser?.uid;
-    final query = FirebaseFirestore.instance
-        .collection('users')
-        .orderBy('points', descending: true)
-        .limit(20);
-
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .orderBy('lifetimePoints', descending: true)
+          .limit(20)
+          .snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator(color: amber));
         }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(
-              child: Text('Abhi koi data nahi hai', style: TextStyle(color: Colors.grey)));
-        }
+
         final docs = snapshot.data!.docs;
+
+        if (docs.isEmpty) {
+          return const Center(child: Text('Abhi koi users nahi hain.'));
+        }
+
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: docs.length,
           itemBuilder: (context, index) {
-            final doc = docs[index];
-            final pts = (doc.data()['points'] ?? 0).toDouble();
-            final isMe = doc.id == myUid;
-            final isTop3 = index < 3;
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isMe ? amber.withOpacity(0.12) : cardDark,
-                borderRadius: BorderRadius.circular(16),
-                border: isMe ? Border.all(color: amber.withOpacity(0.4)) : null,
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isTop3
-                          ? medalColors[index].withOpacity(0.2)
-                          : purple.withOpacity(0.15),
-                      border: Border.all(
-                          color: isTop3 ? medalColors[index] : purple, width: 1.5),
-                    ),
-                    child: Center(
-                      child: isTop3
-                          ? Icon(Icons.emoji_events, size: 16, color: medalColors[index])
-                          : Text('${index + 1}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'User ${doc.id.substring(0, 8)}${isMe ? " (Aap)" : ""}',
-                      style: TextStyle(
-                          fontWeight: isMe ? FontWeight.bold : FontWeight.w500,
-                          color: isMe ? amber : Colors.white),
-                    ),
-                  ),
-                  Text(pts.toStringAsFixed(2),
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: amber)),
-                ],
+            final data = docs[index].data();
+            final shortId = data['shortId'] ?? 'Unknown';
+            final pts = (data['lifetimePoints'] ?? 0).toDouble();
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: index == 0
+                      ? amber
+                      : index == 1
+                          ? Colors.grey.shade400
+                          : index == 2
+                              ? Colors.brown.shade300
+                              : cardDark,
+                  foregroundColor: index <= 2 ? Colors.black : Colors.white,
+                  child: Text('#${index + 1}'),
+                ),
+                title: Text('User $shortId',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                trailing: Text('${pts.toStringAsFixed(1)} pts',
+                    style: const TextStyle(
+                        color: amber, fontWeight: FontWeight.bold)),
               ),
             );
           },
