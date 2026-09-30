@@ -90,9 +90,9 @@ class BoostStage {
 }
 
 const boostChain = [
-  BoostStage(1.5, 300, Color(0xFF34D399)),
-  BoostStage(2.0, 180, Color(0xFF60A5FA)),
-  BoostStage(2.5, 60, Color(0xFFF472B6)),
+  BoostStage(1.5, 120, Color(0xFF34D399)),
+  BoostStage(2.0, 90, Color(0xFF60A5FA)),
+  BoostStage(3.5, 60, Color(0xFFF472B6)),
   BoostStage(5.0, 30, Color(0xFFFB923C)),
 ];
 
