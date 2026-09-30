@@ -5,6 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
 
+final GlobalKey<ScaffoldMessengerState> messengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -31,6 +34,7 @@ class TapMineApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: messengerKey,
       debugShowCheckedModeBanner: false,
       title: 'TapMine Rewards',
       theme: ThemeData.dark(useMaterial3: true).copyWith(
@@ -81,7 +85,6 @@ const packages = [
       Duration(days: 30), Icons.diamond_rounded, Color(0xFFF472B6)),
 ];
 
-// Boost chain stages: multiplier, duration in seconds, label
 class BoostStage {
   final double multiplier;
   final int seconds;
@@ -96,6 +99,35 @@ const boostChain = [
   BoostStage(5.0, 30, Color(0xFFFB923C)),
 ];
 
+const streakBonusTable = [50, 100, 150, 200, 300, 400, 500];
+
+class Achievement {
+  final String id;
+  final String title;
+  final String desc;
+  final int bonus;
+  final IconData icon;
+  final Color color;
+  final bool Function(double lifetimePoints, int referralCount, int streakCount) check;
+  const Achievement(this.id, this.title, this.desc, this.bonus, this.icon,
+      this.color, this.check);
+}
+
+final achievementsList = [
+  Achievement('points_1000', 'Rising Miner', '1000 lifetime points kamao', 200,
+      Icons.trending_up, const Color(0xFF34D399), (lp, rc, sc) => lp >= 1000),
+  Achievement('points_5000', 'Power Miner', '5000 lifetime points kamao', 500,
+      Icons.flash_on, const Color(0xFF60A5FA), (lp, rc, sc) => lp >= 5000),
+  Achievement('points_20000', 'Mining Legend', '20000 lifetime points kamao', 2000,
+      Icons.workspace_premium, const Color(0xFFF472B6), (lp, rc, sc) => lp >= 20000),
+  Achievement('referrals_1', 'First Friend', '1 dost refer karo', 100,
+      Icons.person_add, purple, (lp, rc, sc) => rc >= 1),
+  Achievement('referrals_5', 'Community Builder', '5 dost refer karo', 1000,
+      Icons.groups, const Color(0xFFFB923C), (lp, rc, sc) => rc >= 5),
+  Achievement('streak_7', 'Consistent Miner', '7 din lagatar app kholo', 500,
+      Icons.local_fire_department, const Color(0xFFEF4444), (lp, rc, sc) => sc >= 7),
+];
+
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
   @override
@@ -108,14 +140,18 @@ class _RootScreenState extends State<RootScreen> {
   String? shortId;
   String? referredBy;
   double points = 0;
+  double lifetimePoints = 0;
+  int referralCount = 0;
+  int streakCount = 0;
+  Set<String> claimedAchievements = {};
+
   int baseHashrate = 100;
   double packageMultiplier = 1.0;
   DateTime? packageExpiresAt;
 
-  // Boost chain state: 0 = not started, 1-4 = which stage is active/completed-waiting
   int chainStage = 0;
   int chainSecondsLeft = 0;
-  bool chainActive = false; // true while a stage is counting down
+  bool chainActive = false;
 
   Timer? timer;
   DocumentReference<Map<String, dynamic>>? userDoc;
@@ -135,29 +171,70 @@ class _RootScreenState extends State<RootScreen> {
   }
 
   Future<void> _signInAndLoad() async {
+    int? dailyBonus;
     try {
       final cred = await FirebaseAuth.instance.signInAnonymously();
       uid = cred.user!.uid;
       shortId = uid!.substring(0, 8);
       userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
       final snap = await userDoc!.get();
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+
       if (snap.exists) {
         final data = snap.data()!;
         points = (data['points'] ?? 0).toDouble();
+        lifetimePoints = (data['lifetimePoints'] ?? points).toDouble();
         referredBy = data['referredBy'];
+        referralCount = (data['referralCount'] ?? 0) as int;
+        streakCount = (data['streakCount'] ?? 0) as int;
+        claimedAchievements =
+            ((data['claimedAchievements'] as List?) ?? []).cast<String>().toSet();
         final mult = (data['packageMultiplier'] ?? 1.0).toDouble();
         final expiresTs = data['packageExpiresAt'];
         if (expiresTs is Timestamp && expiresTs.toDate().isAfter(DateTime.now())) {
           packageMultiplier = mult;
           packageExpiresAt = expiresTs.toDate();
         }
+
+        DateTime? lastDate;
+        if (data['lastLoginDate'] is Timestamp) {
+          final d = (data['lastLoginDate'] as Timestamp).toDate();
+          lastDate = DateTime(d.year, d.month, d.day);
+        }
+        if (lastDate == null || lastDate.isBefore(todayDate)) {
+          if (lastDate != null && todayDate.difference(lastDate).inDays == 1) {
+            streakCount += 1;
+          } else {
+            streakCount = 1;
+          }
+          final bonus = streakBonusTable[(streakCount - 1) % 7];
+          dailyBonus = bonus;
+          points += bonus;
+          lifetimePoints += bonus;
+          await userDoc!.update({
+            'lastLoginDate': Timestamp.fromDate(todayDate),
+            'streakCount': streakCount,
+            'points': points,
+            'lifetimePoints': lifetimePoints,
+          });
+        }
       } else {
+        streakCount = 1;
+        dailyBonus = streakBonusTable[0];
+        points = dailyBonus.toDouble();
+        lifetimePoints = points;
         await userDoc!.set({
-          'points': 0,
+          'points': points,
+          'lifetimePoints': lifetimePoints,
           'shortId': shortId,
           'referredBy': null,
+          'referralCount': 0,
           'packageMultiplier': 1.0,
           'packageExpiresAt': null,
+          'streakCount': streakCount,
+          'lastLoginDate': Timestamp.fromDate(todayDate),
+          'claimedAchievements': <String>[],
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
@@ -166,24 +243,33 @@ class _RootScreenState extends State<RootScreen> {
     }
     if (!mounted) return;
     setState(() => loading = false);
+    if (dailyBonus != null) {
+      final b = dailyBonus;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        messengerKey.currentState?.showSnackBar(
+          SnackBar(
+            backgroundColor: cardDark,
+            content: Text('🔥 Day $streakCount streak! +$b points mile'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      });
+    }
     timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
   void _tick() {
     setState(() {
-      points += displayHashrate / 1000;
-
+      final earned = displayHashrate / 1000;
+      points += earned;
+      lifetimePoints += earned;
       if (chainActive) {
         chainSecondsLeft--;
         if (chainSecondsLeft <= 0) {
-          chainActive = false; // stage khatam, ab wait state (next ad ka button)
-          if (chainStage >= boostChain.length) {
-            // chain poori ho gayi, sab reset
-            chainStage = 0;
-          }
+          chainActive = false;
+          if (chainStage >= boostChain.length) chainStage = 0;
         }
       }
-
       if (packageExpiresAt != null && DateTime.now().isAfter(packageExpiresAt!)) {
         packageMultiplier = 1.0;
         packageExpiresAt = null;
@@ -193,27 +279,16 @@ class _RootScreenState extends State<RootScreen> {
     secondsSinceSave++;
     if (secondsSinceSave >= 5) {
       secondsSinceSave = 0;
-      userDoc?.update({'points': points});
+      userDoc?.update({'points': points, 'lifetimePoints': lifetimePoints});
     }
   }
 
-  // Ad dekh kar agla stage shuru karo
   void watchAdForNextStage() {
     setState(() {
-      if (chainStage >= boostChain.length) {
-        chainStage = 0; // safety
-      }
+      if (chainStage >= boostChain.length) chainStage = 0;
       chainStage += 1;
       chainSecondsLeft = boostChain[chainStage - 1].seconds;
       chainActive = true;
-    });
-  }
-
-  void resetChain() {
-    setState(() {
-      chainStage = 0;
-      chainActive = false;
-      chainSecondsLeft = 0;
     });
   }
 
@@ -247,22 +322,43 @@ class _RootScreenState extends State<RootScreen> {
     if (q.docs.isEmpty) return 'Ye code nahi mila';
 
     final referrerRef = q.docs.first.reference;
-    await referrerRef.update({'points': FieldValue.increment(50)});
+    await referrerRef.update({
+      'points': FieldValue.increment(50),
+      'lifetimePoints': FieldValue.increment(50),
+      'referralCount': FieldValue.increment(1),
+    });
     await userDoc!.update({
       'referredBy': code,
       'points': FieldValue.increment(25),
+      'lifetimePoints': FieldValue.increment(25),
     });
     setState(() {
       referredBy = code;
       points += 25;
+      lifetimePoints += 25;
     });
     return null;
+  }
+
+  Future<void> claimAchievement(Achievement ach) async {
+    if (claimedAchievements.contains(ach.id)) return;
+    if (!ach.check(lifetimePoints, referralCount, streakCount)) return;
+    setState(() {
+      points += ach.bonus;
+      lifetimePoints += ach.bonus;
+      claimedAchievements.add(ach.id);
+    });
+    await userDoc?.update({
+      'points': points,
+      'lifetimePoints': lifetimePoints,
+      'claimedAchievements': FieldValue.arrayUnion([ach.id]),
+    });
   }
 
   @override
   void dispose() {
     timer?.cancel();
-    userDoc?.update({'points': points});
+    userDoc?.update({'points': points, 'lifetimePoints': lifetimePoints});
     super.dispose();
   }
 
@@ -294,6 +390,13 @@ class _RootScreenState extends State<RootScreen> {
         activeExpiresAt: packageExpiresAt,
         onBuy: buyPackage,
       ),
+      RewardsTab(
+        streakCount: streakCount,
+        lifetimePoints: lifetimePoints,
+        referralCount: referralCount,
+        claimedAchievements: claimedAchievements,
+        onClaim: claimAchievement,
+      ),
       const LeaderboardTab(),
     ];
     return Scaffold(
@@ -315,6 +418,8 @@ class _RootScreenState extends State<RootScreen> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.memory_outlined), label: 'Mining'),
           NavigationDestination(icon: Icon(Icons.bolt_outlined), label: 'Packages'),
+          NavigationDestination(
+              icon: Icon(Icons.emoji_events_outlined), label: 'Rewards'),
           NavigationDestination(
               icon: Icon(Icons.leaderboard_outlined), label: 'Leaderboard'),
         ],
@@ -370,15 +475,13 @@ class _HomeTabState extends State<HomeTab> {
   Widget build(BuildContext context) {
     final atFinalStage = widget.chainStage >= boostChain.length;
     final canWatchNext = !widget.chainActive && !(atFinalStage);
-    Color stageColor = widget.chainStage >= 1
-        ? boostChain[widget.chainStage - 1].color
-        : amber;
+    Color stageColor =
+        widget.chainStage >= 1 ? boostChain[widget.chainStage - 1].color : amber;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
       child: Column(
         children: [
-          // Main mining card
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
@@ -387,10 +490,7 @@ class _HomeTabState extends State<HomeTab> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  stageColor.withOpacity(0.18),
-                  purple.withOpacity(0.10),
-                ],
+                colors: [stageColor.withOpacity(0.18), purple.withOpacity(0.10)],
               ),
               border: Border.all(color: stageColor.withOpacity(0.3)),
             ),
@@ -399,17 +499,13 @@ class _HomeTabState extends State<HomeTab> {
                 Container(
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: stageColor.withOpacity(0.15),
-                  ),
+                      shape: BoxShape.circle, color: stageColor.withOpacity(0.15)),
                   child: Icon(Icons.memory, size: 56, color: stageColor),
                 ),
                 const SizedBox(height: 18),
                 Text('${widget.hashrate} H/s',
                     style: const TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5)),
+                        fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
                 const SizedBox(height: 6),
                 Text('${widget.points.toStringAsFixed(3)} pts',
                     style: TextStyle(
@@ -419,8 +515,7 @@ class _HomeTabState extends State<HomeTab> {
                 if (widget.shortId != null) ...[
                   const SizedBox(height: 10),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.06),
                       borderRadius: BorderRadius.circular(20),
@@ -433,8 +528,7 @@ class _HomeTabState extends State<HomeTab> {
                     widget.packageExpiresAt != null) ...[
                   const SizedBox(height: 10),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                     decoration: BoxDecoration(
                       color: green.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(20),
@@ -449,10 +543,7 @@ class _HomeTabState extends State<HomeTab> {
                   ),
                 ],
                 const SizedBox(height: 22),
-
-                // ===== Boost Chain UI =====
                 if (widget.chainActive) ...[
-                  // Stage timer progress bar
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -462,7 +553,9 @@ class _HomeTabState extends State<HomeTab> {
                         'Stage ${widget.chainStage}/${boostChain.length} · '
                         '${boostChain[widget.chainStage - 1].multiplier}x active',
                         style: TextStyle(
-                            color: stageColor, fontWeight: FontWeight.bold, fontSize: 14),
+                            color: stageColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14),
                       ),
                     ],
                   ),
@@ -506,8 +599,8 @@ class _HomeTabState extends State<HomeTab> {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
-                        textStyle: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15),
+                        textStyle:
+                            const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       onPressed: widget.onWatchAd,
                       icon: const Icon(Icons.play_circle_fill),
@@ -520,10 +613,8 @@ class _HomeTabState extends State<HomeTab> {
                   ),
                   if (widget.chainStage > 0) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      '${widget.chainStage}/${boostChain.length} stages complete kiye',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
+                    Text('${widget.chainStage}/${boostChain.length} stages complete kiye',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
                   ],
                 ] else ...[
                   Container(
@@ -542,10 +633,7 @@ class _HomeTabState extends State<HomeTab> {
               ],
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // Referral card
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(18),
@@ -555,7 +643,6 @@ class _HomeTabState extends State<HomeTab> {
               border: Border.all(color: purple.withOpacity(0.25)),
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -568,8 +655,7 @@ class _HomeTabState extends State<HomeTab> {
                 ),
                 const SizedBox(height: 10),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   decoration: BoxDecoration(
                     color: purple.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
@@ -586,10 +672,9 @@ class _HomeTabState extends State<HomeTab> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: purple,
                     side: BorderSide(color: purple.withOpacity(0.5)),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape:
+                        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () {
                     Share.share(
@@ -601,17 +686,12 @@ class _HomeTabState extends State<HomeTab> {
               ],
             ),
           ),
-
           const SizedBox(height: 16),
-
-          // Apply referral card
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: cardDark,
-              borderRadius: BorderRadius.circular(20),
-            ),
+            decoration:
+                BoxDecoration(color: cardDark, borderRadius: BorderRadius.circular(20)),
             child: widget.referredBy != null
                 ? Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -684,7 +764,6 @@ class _HomeTabState extends State<HomeTab> {
                     ],
                   ),
           ),
-
           const SizedBox(height: 20),
           Text(
             'Ye ek rewards game hai. Is app mein real crypto mining nahi hoti.',
@@ -728,15 +807,13 @@ class _PackagesTabState extends State<PackagesTab> {
           width: double.infinity,
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [amber.withOpacity(0.2), purple.withOpacity(0.1)],
-            ),
+            gradient:
+                LinearGradient(colors: [amber.withOpacity(0.2), purple.withOpacity(0.1)]),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Column(
             children: [
-              const Text('Aapke Points',
-                  style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const Text('Aapke Points', style: TextStyle(color: Colors.grey, fontSize: 13)),
               const SizedBox(height: 4),
               Text(widget.points.toStringAsFixed(2),
                   style: const TextStyle(
@@ -774,10 +851,8 @@ class _PackagesTabState extends State<PackagesTab> {
               children: [
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: pkg.color.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                  ),
+                  decoration:
+                      BoxDecoration(color: pkg.color.withOpacity(0.15), shape: BoxShape.circle),
                   child: Icon(pkg.icon, color: pkg.color, size: 26),
                 ),
                 const SizedBox(width: 14),
@@ -786,17 +861,13 @@ class _PackagesTabState extends State<PackagesTab> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(pkg.title,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       const SizedBox(height: 2),
-                      Text(pkg.subtitle,
-                          style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      Text(pkg.subtitle, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                       const SizedBox(height: 4),
                       Text('${pkg.cost} points',
                           style: TextStyle(
-                              color: pkg.color,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13)),
+                              color: pkg.color, fontWeight: FontWeight.w600, fontSize: 13)),
                     ],
                   ),
                 ),
@@ -804,8 +875,7 @@ class _PackagesTabState extends State<PackagesTab> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: pkg.color,
                     foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                   onPressed: buying
                       ? null
@@ -832,6 +902,147 @@ class _PackagesTabState extends State<PackagesTab> {
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
+    );
+  }
+}
+
+class RewardsTab extends StatelessWidget {
+  final int streakCount;
+  final double lifetimePoints;
+  final int referralCount;
+  final Set<String> claimedAchievements;
+  final Future<void> Function(Achievement ach) onClaim;
+
+  const RewardsTab({
+    super.key,
+    required this.streakCount,
+    required this.lifetimePoints,
+    required this.referralCount,
+    required this.claimedAchievements,
+    required this.onClaim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final nextBonus = streakBonusTable[streakCount % 7];
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+                colors: [Color(0xFFEF4444), Color(0xFFFB923C)]),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            children: [
+              const Icon(Icons.local_fire_department, color: Colors.white, size: 40),
+              const SizedBox(height: 8),
+              Text('$streakCount Din Streak',
+                  style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(height: 4),
+              Text('Kal wapas aao: +$nextBonus points',
+                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Achievements',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        for (final ach in achievementsList)
+          _AchievementCard(
+            achievement: ach,
+            unlocked: ach.check(lifetimePoints, referralCount, streakCount),
+            claimed: claimedAchievements.contains(ach.id),
+            onClaim: () => onClaim(ach),
+          ),
+      ],
+    );
+  }
+}
+
+class _AchievementCard extends StatelessWidget {
+  final Achievement achievement;
+  final bool unlocked;
+  final bool claimed;
+  final VoidCallback onClaim;
+
+  const _AchievementCard({
+    required this.achievement,
+    required this.unlocked,
+    required this.claimed,
+    required this.onClaim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ach = achievement;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cardDark,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: claimed
+                ? green.withOpacity(0.4)
+                : (unlocked ? ach.color.withOpacity(0.5) : Colors.white.withOpacity(0.08))),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: (claimed ? green : ach.color)
+                  .withOpacity(unlocked || claimed ? 0.18 : 0.06),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              claimed ? Icons.check_circle : ach.icon,
+              color: claimed ? green : (unlocked ? ach.color : Colors.grey),
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(ach.title,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: unlocked || claimed ? Colors.white : Colors.grey)),
+                const SizedBox(height: 2),
+                Text(ach.desc, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 2),
+                Text('+${ach.bonus} points',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: ach.color,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          if (claimed)
+            const Icon(Icons.check_circle, color: green)
+          else if (unlocked)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: ach.color,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: onClaim,
+              child: const Text('Claim'),
+            )
+          else
+            const Icon(Icons.lock_outline, color: Colors.grey, size: 20),
+        ],
+      ),
     );
   }
 }
@@ -893,8 +1104,8 @@ class LeaderboardTab extends StatelessWidget {
                       child: isTop3
                           ? Icon(Icons.emoji_events, size: 16, color: medalColors[index])
                           : Text('${index + 1}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 13)),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
                   ),
                   const SizedBox(width: 12),
