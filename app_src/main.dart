@@ -19,6 +19,13 @@ void main() async {
   runApp(const TapMineApp());
 }
 
+const bgDark = Color(0xFF0B0E14);
+const cardDark = Color(0xFF161B26);
+const amber = Color(0xFFFFC94D);
+const purple = Color(0xFF8B5CF6);
+const green = Color(0xFF34D399);
+const red = Color(0xFFF87171);
+
 class TapMineApp extends StatelessWidget {
   const TapMineApp({super.key});
   @override
@@ -26,7 +33,27 @@ class TapMineApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'TapMine Rewards',
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: ThemeData.dark(useMaterial3: true).copyWith(
+        scaffoldBackgroundColor: bgDark,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: amber,
+          brightness: Brightness.dark,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: bgDark,
+          elevation: 0,
+          centerTitle: true,
+        ),
+        cardTheme: CardThemeData(
+          color: cardDark,
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: cardDark,
+          indicatorColor: amber.withOpacity(0.25),
+        ),
+      ),
       home: const RootScreen(),
     );
   }
@@ -35,16 +62,38 @@ class TapMineApp extends StatelessWidget {
 class Package {
   final String id;
   final String title;
+  final String subtitle;
   final int cost;
   final double multiplier;
   final Duration duration;
-  const Package(this.id, this.title, this.cost, this.multiplier, this.duration);
+  final IconData icon;
+  final Color color;
+  const Package(this.id, this.title, this.subtitle, this.cost, this.multiplier,
+      this.duration, this.icon, this.color);
 }
 
 const packages = [
-  Package('daily', 'Daily Booster — 24 ghante, 1.5x', 500, 1.5, Duration(hours: 24)),
-  Package('weekly', 'Weekly Booster — 7 din, 2x', 3000, 2.0, Duration(days: 7)),
-  Package('monthly', 'Monthly Booster — 30 din, 3x', 10000, 3.0, Duration(days: 30)),
+  Package('daily', 'Daily Booster', '24 ghante · 1.5x', 500, 1.5,
+      Duration(hours: 24), Icons.wb_sunny_rounded, Color(0xFF34D399)),
+  Package('weekly', 'Weekly Booster', '7 din · 2x', 3000, 2.0,
+      Duration(days: 7), Icons.rocket_launch_rounded, Color(0xFF60A5FA)),
+  Package('monthly', 'Monthly Booster', '30 din · 3x', 10000, 3.0,
+      Duration(days: 30), Icons.diamond_rounded, Color(0xFFF472B6)),
+];
+
+// Boost chain stages: multiplier, duration in seconds, label
+class BoostStage {
+  final double multiplier;
+  final int seconds;
+  final Color color;
+  const BoostStage(this.multiplier, this.seconds, this.color);
+}
+
+const boostChain = [
+  BoostStage(1.5, 300, Color(0xFF34D399)),
+  BoostStage(2.0, 180, Color(0xFF60A5FA)),
+  BoostStage(2.5, 60, Color(0xFFF472B6)),
+  BoostStage(5.0, 30, Color(0xFFFB923C)),
 ];
 
 class RootScreen extends StatefulWidget {
@@ -60,17 +109,24 @@ class _RootScreenState extends State<RootScreen> {
   String? referredBy;
   double points = 0;
   int baseHashrate = 100;
-  bool adBoosted = false;
-  int adBoostLeft = 0;
   double packageMultiplier = 1.0;
   DateTime? packageExpiresAt;
+
+  // Boost chain state: 0 = not started, 1-4 = which stage is active/completed-waiting
+  int chainStage = 0;
+  int chainSecondsLeft = 0;
+  bool chainActive = false; // true while a stage is counting down
+
   Timer? timer;
   DocumentReference<Map<String, dynamic>>? userDoc;
   bool loading = true;
   int secondsSinceSave = 0;
 
+  double get chainMultiplier =>
+      (chainActive && chainStage >= 1) ? boostChain[chainStage - 1].multiplier : 1.0;
+
   int get displayHashrate =>
-      ((adBoosted ? 200 : baseHashrate) * packageMultiplier).round();
+      (baseHashrate * chainMultiplier * packageMultiplier).round();
 
   @override
   void initState() {
@@ -116,10 +172,18 @@ class _RootScreenState extends State<RootScreen> {
   void _tick() {
     setState(() {
       points += displayHashrate / 1000;
-      if (adBoosted) {
-        adBoostLeft--;
-        if (adBoostLeft <= 0) adBoosted = false;
+
+      if (chainActive) {
+        chainSecondsLeft--;
+        if (chainSecondsLeft <= 0) {
+          chainActive = false; // stage khatam, ab wait state (next ad ka button)
+          if (chainStage >= boostChain.length) {
+            // chain poori ho gayi, sab reset
+            chainStage = 0;
+          }
+        }
       }
+
       if (packageExpiresAt != null && DateTime.now().isAfter(packageExpiresAt!)) {
         packageMultiplier = 1.0;
         packageExpiresAt = null;
@@ -133,10 +197,23 @@ class _RootScreenState extends State<RootScreen> {
     }
   }
 
-  void boostWithAd() {
+  // Ad dekh kar agla stage shuru karo
+  void watchAdForNextStage() {
     setState(() {
-      adBoosted = true;
-      adBoostLeft = 30;
+      if (chainStage >= boostChain.length) {
+        chainStage = 0; // safety
+      }
+      chainStage += 1;
+      chainSecondsLeft = boostChain[chainStage - 1].seconds;
+      chainActive = true;
+    });
+  }
+
+  void resetChain() {
+    setState(() {
+      chainStage = 0;
+      chainActive = false;
+      chainSecondsLeft = 0;
     });
   }
 
@@ -192,7 +269,10 @@ class _RootScreenState extends State<RootScreen> {
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: bgDark,
+        body: Center(child: CircularProgressIndicator(color: amber)),
+      );
     }
     final screens = [
       HomeTab(
@@ -200,11 +280,12 @@ class _RootScreenState extends State<RootScreen> {
         points: points,
         shortId: shortId,
         referredBy: referredBy,
-        adBoosted: adBoosted,
-        adBoostLeft: adBoostLeft,
+        chainStage: chainStage,
+        chainActive: chainActive,
+        chainSecondsLeft: chainSecondsLeft,
         packageMultiplier: packageMultiplier,
         packageExpiresAt: packageExpiresAt,
-        onBoost: boostWithAd,
+        onWatchAd: watchAdForNextStage,
         onApplyReferral: applyReferral,
       ),
       PackagesTab(
@@ -216,16 +297,26 @@ class _RootScreenState extends State<RootScreen> {
       const LeaderboardTab(),
     ];
     return Scaffold(
-      appBar: AppBar(title: const Text('TapMine Rewards')),
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.memory, color: amber, size: 22),
+            SizedBox(width: 8),
+            Text('TapMine Rewards',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
       body: screens[tabIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: tabIndex,
         onDestinationSelected: (i) => setState(() => tabIndex = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.memory), label: 'Mining'),
-          NavigationDestination(icon: Icon(Icons.bolt), label: 'Packages'),
+          NavigationDestination(icon: Icon(Icons.memory_outlined), label: 'Mining'),
+          NavigationDestination(icon: Icon(Icons.bolt_outlined), label: 'Packages'),
           NavigationDestination(
-              icon: Icon(Icons.leaderboard), label: 'Leaderboard'),
+              icon: Icon(Icons.leaderboard_outlined), label: 'Leaderboard'),
         ],
       ),
     );
@@ -237,11 +328,12 @@ class HomeTab extends StatefulWidget {
   final double points;
   final String? shortId;
   final String? referredBy;
-  final bool adBoosted;
-  final int adBoostLeft;
+  final int chainStage;
+  final bool chainActive;
+  final int chainSecondsLeft;
   final double packageMultiplier;
   final DateTime? packageExpiresAt;
-  final VoidCallback onBoost;
+  final VoidCallback onWatchAd;
   final Future<String?> Function(String code) onApplyReferral;
 
   const HomeTab({
@@ -250,11 +342,12 @@ class HomeTab extends StatefulWidget {
     required this.points,
     required this.shortId,
     required this.referredBy,
-    required this.adBoosted,
-    required this.adBoostLeft,
+    required this.chainStage,
+    required this.chainActive,
+    required this.chainSecondsLeft,
     required this.packageMultiplier,
     required this.packageExpiresAt,
-    required this.onBoost,
+    required this.onWatchAd,
     required this.onApplyReferral,
   });
 
@@ -267,112 +360,336 @@ class _HomeTabState extends State<HomeTab> {
   String? message;
   bool applying = false;
 
+  String _fmt(int secs) {
+    final m = secs ~/ 60;
+    final s = secs % 60;
+    return m > 0 ? '${m}m ${s}s' : '${s}s';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final atFinalStage = widget.chainStage >= boostChain.length;
+    final canWatchNext = !widget.chainActive && !(atFinalStage);
+    Color stageColor = widget.chainStage >= 1
+        ? boostChain[widget.chainStage - 1].color
+        : amber;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
       child: Column(
         children: [
-          const SizedBox(height: 12),
-          const Icon(Icons.memory, size: 90, color: Colors.amber),
-          const SizedBox(height: 16),
-          Text('${widget.hashrate} H/s',
-              style:
-                  const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text('Points: ${widget.points.toStringAsFixed(3)}',
-              style: const TextStyle(fontSize: 22)),
-          const SizedBox(height: 8),
-          if (widget.shortId != null)
-            Text('ID: ${widget.shortId}',
-                style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          if (widget.packageMultiplier > 1.0 && widget.packageExpiresAt != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              '${widget.packageMultiplier}x package active, khatam: '
-              '${widget.packageExpiresAt!.day}/${widget.packageExpiresAt!.month}',
-              style: const TextStyle(fontSize: 12, color: Colors.tealAccent),
-            ),
-          ],
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: widget.adBoosted ? null : widget.onBoost,
-            icon: const Icon(Icons.bolt),
-            label: Text(widget.adBoosted
-                ? 'Boost active: ${widget.adBoostLeft}s'
-                : 'Boost 2x (30 sec)'),
-          ),
-          const SizedBox(height: 32),
-          const Divider(),
-          const SizedBox(height: 12),
-          const Text('Apna referral code share karo',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(widget.shortId ?? '',
-              style: const TextStyle(fontSize: 20, letterSpacing: 2)),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () {
-              Share.share(
-                  'TapMine Rewards mein mere saath join karo! Mera referral code: ${widget.shortId}');
-            },
-            icon: const Icon(Icons.share),
-            label: const Text('Code share karo'),
-          ),
-          const SizedBox(height: 24),
-          const Divider(),
-          const SizedBox(height: 12),
-          if (widget.referredBy != null)
-            Text('Referral code lag chuka hai: ${widget.referredBy}',
-                style: const TextStyle(color: Colors.green))
-          else ...[
-            const Text('Kisi ka referral code hai to yahan lagao'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: codeController,
-              textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Referral code',
+          // Main mining card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  stageColor.withOpacity(0.18),
+                  purple.withOpacity(0.10),
+                ],
               ),
+              border: Border.all(color: stageColor.withOpacity(0.3)),
             ),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: applying
-                  ? null
-                  : () async {
-                      setState(() {
-                        applying = true;
-                        message = null;
-                      });
-                      final err =
-                          await widget.onApplyReferral(codeController.text);
-                      setState(() {
-                        applying = false;
-                        message = err ?? 'Bonus points mil gaye!';
-                      });
-                    },
-              child: applying
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Apply karo'),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: stageColor.withOpacity(0.15),
+                  ),
+                  child: Icon(Icons.memory, size: 56, color: stageColor),
+                ),
+                const SizedBox(height: 18),
+                Text('${widget.hashrate} H/s',
+                    style: const TextStyle(
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5)),
+                const SizedBox(height: 6),
+                Text('${widget.points.toStringAsFixed(3)} pts',
+                    style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.white.withOpacity(0.85),
+                        fontWeight: FontWeight.w600)),
+                if (widget.shortId != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text('ID: ${widget.shortId}',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ),
+                ],
+                if (widget.packageMultiplier > 1.0 &&
+                    widget.packageExpiresAt != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: green.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: green.withOpacity(0.4)),
+                    ),
+                    child: Text(
+                      '📦 ${widget.packageMultiplier}x package · '
+                      '${widget.packageExpiresAt!.day}/${widget.packageExpiresAt!.month} tak',
+                      style: const TextStyle(
+                          fontSize: 12, color: green, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 22),
+
+                // ===== Boost Chain UI =====
+                if (widget.chainActive) ...[
+                  // Stage timer progress bar
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.bolt, color: stageColor, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Stage ${widget.chainStage}/${boostChain.length} · '
+                        '${boostChain[widget.chainStage - 1].multiplier}x active',
+                        style: TextStyle(
+                            color: stageColor, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(_fmt(widget.chainSecondsLeft),
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: LinearProgressIndicator(
+                      value: widget.chainSecondsLeft /
+                          boostChain[widget.chainStage - 1].seconds,
+                      minHeight: 8,
+                      backgroundColor: Colors.white.withOpacity(0.08),
+                      valueColor: AlwaysStoppedAnimation(stageColor),
+                    ),
+                  ),
+                  if (widget.chainStage < boostChain.length) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Agla: ${boostChain[widget.chainStage].multiplier}x '
+                      '(${_fmt(boostChain[widget.chainStage].seconds)}) — khatam hote hi ad dekh kar unlock karo',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Ye aakhri stage hai! Khatam hone par chain reset ho jayegi.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ] else if (canWatchNext) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: boostChain[widget.chainStage].color,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        textStyle: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                      onPressed: widget.onWatchAd,
+                      icon: const Icon(Icons.play_circle_fill),
+                      label: Text(widget.chainStage == 0
+                          ? 'Ad dekho — ${boostChain[0].multiplier}x '
+                              '(${_fmt(boostChain[0].seconds)}) shuru karo'
+                          : 'Ad dekho — ${boostChain[widget.chainStage].multiplier}x '
+                              '(${_fmt(boostChain[widget.chainStage].seconds)}) unlock karo'),
+                    ),
+                  ),
+                  if (widget.chainStage > 0) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${widget.chainStage}/${boostChain.length} stages complete kiye',
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      '🎉 Poori chain complete! Dobara shuru karne ke liye niche dekho',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            if (message != null) ...[
-              const SizedBox(height: 8),
-              Text(message!,
-                  style: TextStyle(
-                      color: message == 'Bonus points mil gaye!'
-                          ? Colors.green
-                          : Colors.red)),
-            ],
-          ],
-          const SizedBox(height: 32),
-          const Text(
+          ),
+
+          const SizedBox(height: 20),
+
+          // Referral card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: cardDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: purple.withOpacity(0.25)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: const [
+                    Icon(Icons.card_giftcard_rounded, color: purple, size: 20),
+                    SizedBox(width: 8),
+                    Text('Apna referral code share karo',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: purple.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(widget.shortId ?? '',
+                      style: const TextStyle(
+                          fontSize: 20,
+                          letterSpacing: 3,
+                          fontWeight: FontWeight.bold,
+                          color: purple)),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: purple,
+                    side: BorderSide(color: purple.withOpacity(0.5)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    Share.share(
+                        'TapMine Rewards mein mere saath join karo! Mera referral code: ${widget.shortId}');
+                  },
+                  icon: const Icon(Icons.share, size: 18),
+                  label: const Text('Code share karo'),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Apply referral card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: cardDark,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: widget.referredBy != null
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.check_circle, color: green, size: 18),
+                      const SizedBox(width: 8),
+                      Text('Referral code lag chuka hai: ${widget.referredBy}',
+                          style: const TextStyle(color: green)),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      const Text('Kisi ka referral code hai to yahan lagao',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: codeController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: bgDark,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          hintText: 'Referral code',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: purple,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: applying
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    applying = true;
+                                    message = null;
+                                  });
+                                  final err = await widget
+                                      .onApplyReferral(codeController.text);
+                                  setState(() {
+                                    applying = false;
+                                    message = err ?? 'Bonus points mil gaye!';
+                                  });
+                                },
+                          child: applying
+                              ? const SizedBox(
+                                  height: 16,
+                                  width: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white))
+                              : const Text('Apply karo'),
+                        ),
+                      ),
+                      if (message != null) ...[
+                        const SizedBox(height: 8),
+                        Text(message!,
+                            style: TextStyle(
+                                color: message == 'Bonus points mil gaye!'
+                                    ? green
+                                    : red)),
+                      ],
+                    ],
+                  ),
+          ),
+
+          const SizedBox(height: 20),
+          Text(
             'Ye ek rewards game hai. Is app mein real crypto mining nahi hoti.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -407,51 +724,112 @@ class _PackagesTabState extends State<PackagesTab> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text('Aapke Points: ${widget.points.toStringAsFixed(2)}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        if (widget.activeMultiplier > 1.0 && widget.activeExpiresAt != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              'Active: ${widget.activeMultiplier}x, khatam: '
-              '${widget.activeExpiresAt!.day}/${widget.activeExpiresAt!.month}/${widget.activeExpiresAt!.year}',
-              style: const TextStyle(color: Colors.tealAccent),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [amber.withOpacity(0.2), purple.withOpacity(0.1)],
             ),
+            borderRadius: BorderRadius.circular(18),
           ),
-        const SizedBox(height: 16),
+          child: Column(
+            children: [
+              const Text('Aapke Points',
+                  style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const SizedBox(height: 4),
+              Text(widget.points.toStringAsFixed(2),
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold, color: amber)),
+              if (widget.activeMultiplier > 1.0 && widget.activeExpiresAt != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '📦 Active: ${widget.activeMultiplier}x · '
+                    '${widget.activeExpiresAt!.day}/${widget.activeExpiresAt!.month}/${widget.activeExpiresAt!.year} tak',
+                    style: const TextStyle(color: green, fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
         if (message != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Text(message!, style: const TextStyle(color: Colors.orange)),
+            child: Text(message!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orangeAccent)),
           ),
         for (final pkg in packages)
-          Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              title: Text(pkg.title),
-              subtitle: Text('${pkg.cost} points'),
-              trailing: ElevatedButton(
-                onPressed: buying
-                    ? null
-                    : () async {
-                        setState(() {
-                          buying = true;
-                          message = null;
-                        });
-                        final err = await widget.onBuy(pkg);
-                        setState(() {
-                          buying = false;
-                          message = err ?? 'Package activate ho gaya!';
-                        });
-                      },
-                child: const Text('Khareedo'),
-              ),
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cardDark,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: pkg.color.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: pkg.color.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(pkg.icon, color: pkg.color, size: 26),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(pkg.title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      const SizedBox(height: 2),
+                      Text(pkg.subtitle,
+                          style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      const SizedBox(height: 4),
+                      Text('${pkg.cost} points',
+                          style: TextStyle(
+                              color: pkg.color,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13)),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: pkg.color,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: buying
+                      ? null
+                      : () async {
+                          setState(() {
+                            buying = true;
+                            message = null;
+                          });
+                          final err = await widget.onBuy(pkg);
+                          setState(() {
+                            buying = false;
+                            message = err ?? 'Package activate ho gaya!';
+                          });
+                        },
+                  child: const Text('Khareedo'),
+                ),
+              ],
             ),
           ),
-        const SizedBox(height: 16),
-        const Text(
+        const SizedBox(height: 8),
+        Text(
           'Ye points-based packages hain, real paisa nahi lagta. Real-money packages Play Store launch ke baad add honge.',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
     );
@@ -460,6 +838,8 @@ class _PackagesTabState extends State<PackagesTab> {
 
 class LeaderboardTab extends StatelessWidget {
   const LeaderboardTab({super.key});
+
+  static const medalColors = [Color(0xFFFFD700), Color(0xFFC0C0C0), Color(0xFFCD7F32)];
 
   @override
   Widget build(BuildContext context) {
@@ -473,27 +853,62 @@ class LeaderboardTab extends StatelessWidget {
       stream: query.snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: CircularProgressIndicator(color: amber));
         }
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('Abhi koi data nahi hai'));
+          return const Center(
+              child: Text('Abhi koi data nahi hai', style: TextStyle(color: Colors.grey)));
         }
         final docs = snapshot.data!.docs;
         return ListView.builder(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           itemCount: docs.length,
           itemBuilder: (context, index) {
             final doc = docs[index];
             final pts = (doc.data()['points'] ?? 0).toDouble();
             final isMe = doc.id == myUid;
-            return Card(
-              color: isMe ? Colors.amber.withOpacity(0.15) : null,
-              child: ListTile(
-                leading: CircleAvatar(child: Text('${index + 1}')),
-                title: Text(
-                    'User ${doc.id.substring(0, 8)}${isMe ? " (Aap)" : ""}'),
-                trailing: Text(pts.toStringAsFixed(2),
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
+            final isTop3 = index < 3;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isMe ? amber.withOpacity(0.12) : cardDark,
+                borderRadius: BorderRadius.circular(16),
+                border: isMe ? Border.all(color: amber.withOpacity(0.4)) : null,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isTop3
+                          ? medalColors[index].withOpacity(0.2)
+                          : purple.withOpacity(0.15),
+                      border: Border.all(
+                          color: isTop3 ? medalColors[index] : purple, width: 1.5),
+                    ),
+                    child: Center(
+                      child: isTop3
+                          ? Icon(Icons.emoji_events, size: 16, color: medalColors[index])
+                          : Text('${index + 1}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'User ${doc.id.substring(0, 8)}${isMe ? " (Aap)" : ""}',
+                      style: TextStyle(
+                          fontWeight: isMe ? FontWeight.bold : FontWeight.w500,
+                          color: isMe ? amber : Colors.white),
+                    ),
+                  ),
+                  Text(pts.toStringAsFixed(2),
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: amber)),
+                ],
               ),
             );
           },
