@@ -32,6 +32,21 @@ class TapMineApp extends StatelessWidget {
   }
 }
 
+class Package {
+  final String id;
+  final String title;
+  final int cost;
+  final double multiplier;
+  final Duration duration;
+  const Package(this.id, this.title, this.cost, this.multiplier, this.duration);
+}
+
+const packages = [
+  Package('daily', 'Daily Booster — 24 ghante, 1.5x', 500, 1.5, Duration(hours: 24)),
+  Package('weekly', 'Weekly Booster — 7 din, 2x', 3000, 2.0, Duration(days: 7)),
+  Package('monthly', 'Monthly Booster — 30 din, 3x', 10000, 3.0, Duration(days: 30)),
+];
+
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
   @override
@@ -44,13 +59,18 @@ class _RootScreenState extends State<RootScreen> {
   String? shortId;
   String? referredBy;
   double points = 0;
-  int hashrate = 100;
-  bool boosted = false;
-  int boostLeft = 0;
+  int baseHashrate = 100;
+  bool adBoosted = false;
+  int adBoostLeft = 0;
+  double packageMultiplier = 1.0;
+  DateTime? packageExpiresAt;
   Timer? timer;
   DocumentReference<Map<String, dynamic>>? userDoc;
   bool loading = true;
   int secondsSinceSave = 0;
+
+  int get displayHashrate =>
+      ((adBoosted ? 200 : baseHashrate) * packageMultiplier).round();
 
   @override
   void initState() {
@@ -66,13 +86,22 @@ class _RootScreenState extends State<RootScreen> {
       userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
       final snap = await userDoc!.get();
       if (snap.exists) {
-        points = (snap.data()?['points'] ?? 0).toDouble();
-        referredBy = snap.data()?['referredBy'];
+        final data = snap.data()!;
+        points = (data['points'] ?? 0).toDouble();
+        referredBy = data['referredBy'];
+        final mult = (data['packageMultiplier'] ?? 1.0).toDouble();
+        final expiresTs = data['packageExpiresAt'];
+        if (expiresTs is Timestamp && expiresTs.toDate().isAfter(DateTime.now())) {
+          packageMultiplier = mult;
+          packageExpiresAt = expiresTs.toDate();
+        }
       } else {
         await userDoc!.set({
           'points': 0,
           'shortId': shortId,
           'referredBy': null,
+          'packageMultiplier': 1.0,
+          'packageExpiresAt': null,
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
@@ -86,13 +115,15 @@ class _RootScreenState extends State<RootScreen> {
 
   void _tick() {
     setState(() {
-      points += hashrate / 1000;
-      if (boosted) {
-        boostLeft--;
-        if (boostLeft <= 0) {
-          boosted = false;
-          hashrate = 100;
-        }
+      points += displayHashrate / 1000;
+      if (adBoosted) {
+        adBoostLeft--;
+        if (adBoostLeft <= 0) adBoosted = false;
+      }
+      if (packageExpiresAt != null && DateTime.now().isAfter(packageExpiresAt!)) {
+        packageMultiplier = 1.0;
+        packageExpiresAt = null;
+        userDoc?.update({'packageMultiplier': 1.0, 'packageExpiresAt': null});
       }
     });
     secondsSinceSave++;
@@ -102,12 +133,27 @@ class _RootScreenState extends State<RootScreen> {
     }
   }
 
-  void boost() {
+  void boostWithAd() {
     setState(() {
-      boosted = true;
-      hashrate = 200;
-      boostLeft = 30;
+      adBoosted = true;
+      adBoostLeft = 30;
     });
+  }
+
+  Future<String?> buyPackage(Package pkg) async {
+    if (points < pkg.cost) return 'Points kam hain';
+    final expiry = DateTime.now().add(pkg.duration);
+    setState(() {
+      points -= pkg.cost;
+      packageMultiplier = pkg.multiplier;
+      packageExpiresAt = expiry;
+    });
+    await userDoc?.update({
+      'points': points,
+      'packageMultiplier': pkg.multiplier,
+      'packageExpiresAt': Timestamp.fromDate(expiry),
+    });
+    return null;
   }
 
   Future<String?> applyReferral(String code) async {
@@ -150,14 +196,22 @@ class _RootScreenState extends State<RootScreen> {
     }
     final screens = [
       HomeTab(
-        hashrate: hashrate,
+        hashrate: displayHashrate,
         points: points,
         shortId: shortId,
         referredBy: referredBy,
-        boosted: boosted,
-        boostLeft: boostLeft,
-        onBoost: boost,
+        adBoosted: adBoosted,
+        adBoostLeft: adBoostLeft,
+        packageMultiplier: packageMultiplier,
+        packageExpiresAt: packageExpiresAt,
+        onBoost: boostWithAd,
         onApplyReferral: applyReferral,
+      ),
+      PackagesTab(
+        points: points,
+        activeMultiplier: packageMultiplier,
+        activeExpiresAt: packageExpiresAt,
+        onBuy: buyPackage,
       ),
       const LeaderboardTab(),
     ];
@@ -169,6 +223,7 @@ class _RootScreenState extends State<RootScreen> {
         onDestinationSelected: (i) => setState(() => tabIndex = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.memory), label: 'Mining'),
+          NavigationDestination(icon: Icon(Icons.bolt), label: 'Packages'),
           NavigationDestination(
               icon: Icon(Icons.leaderboard), label: 'Leaderboard'),
         ],
@@ -182,8 +237,10 @@ class HomeTab extends StatefulWidget {
   final double points;
   final String? shortId;
   final String? referredBy;
-  final bool boosted;
-  final int boostLeft;
+  final bool adBoosted;
+  final int adBoostLeft;
+  final double packageMultiplier;
+  final DateTime? packageExpiresAt;
   final VoidCallback onBoost;
   final Future<String?> Function(String code) onApplyReferral;
 
@@ -193,8 +250,10 @@ class HomeTab extends StatefulWidget {
     required this.points,
     required this.shortId,
     required this.referredBy,
-    required this.boosted,
-    required this.boostLeft,
+    required this.adBoosted,
+    required this.adBoostLeft,
+    required this.packageMultiplier,
+    required this.packageExpiresAt,
     required this.onBoost,
     required this.onApplyReferral,
   });
@@ -227,12 +286,20 @@ class _HomeTabState extends State<HomeTab> {
           if (widget.shortId != null)
             Text('ID: ${widget.shortId}',
                 style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          if (widget.packageMultiplier > 1.0 && widget.packageExpiresAt != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${widget.packageMultiplier}x package active, khatam: '
+              '${widget.packageExpiresAt!.day}/${widget.packageExpiresAt!.month}',
+              style: const TextStyle(fontSize: 12, color: Colors.tealAccent),
+            ),
+          ],
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: widget.boosted ? null : widget.onBoost,
+            onPressed: widget.adBoosted ? null : widget.onBoost,
             icon: const Icon(Icons.bolt),
-            label: Text(widget.boosted
-                ? 'Boost active: ${widget.boostLeft}s'
+            label: Text(widget.adBoosted
+                ? 'Boost active: ${widget.adBoostLeft}s'
                 : 'Boost 2x (30 sec)'),
           ),
           const SizedBox(height: 32),
@@ -309,6 +376,84 @@ class _HomeTabState extends State<HomeTab> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class PackagesTab extends StatefulWidget {
+  final double points;
+  final double activeMultiplier;
+  final DateTime? activeExpiresAt;
+  final Future<String?> Function(Package pkg) onBuy;
+
+  const PackagesTab({
+    super.key,
+    required this.points,
+    required this.activeMultiplier,
+    required this.activeExpiresAt,
+    required this.onBuy,
+  });
+
+  @override
+  State<PackagesTab> createState() => _PackagesTabState();
+}
+
+class _PackagesTabState extends State<PackagesTab> {
+  bool buying = false;
+  String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('Aapke Points: ${widget.points.toStringAsFixed(2)}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        if (widget.activeMultiplier > 1.0 && widget.activeExpiresAt != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Active: ${widget.activeMultiplier}x, khatam: '
+              '${widget.activeExpiresAt!.day}/${widget.activeExpiresAt!.month}/${widget.activeExpiresAt!.year}',
+              style: const TextStyle(color: Colors.tealAccent),
+            ),
+          ),
+        const SizedBox(height: 16),
+        if (message != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(message!, style: const TextStyle(color: Colors.orange)),
+          ),
+        for (final pkg in packages)
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              title: Text(pkg.title),
+              subtitle: Text('${pkg.cost} points'),
+              trailing: ElevatedButton(
+                onPressed: buying
+                    ? null
+                    : () async {
+                        setState(() {
+                          buying = true;
+                          message = null;
+                        });
+                        final err = await widget.onBuy(pkg);
+                        setState(() {
+                          buying = false;
+                          message = err ?? 'Package activate ho gaya!';
+                        });
+                      },
+                child: const Text('Khareedo'),
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
+        const Text(
+          'Ye points-based packages hain, real paisa nahi lagta. Real-money packages Play Store launch ke baad add honge.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
     );
   }
 }
