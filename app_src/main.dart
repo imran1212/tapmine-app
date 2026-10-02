@@ -12,7 +12,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: const FirebaseOptions(
-      apiKey: "AIzaSyDsOUui-GnbX_NuXqMbYc6ygXP1F5GRxw",
+      apiKey: "AIzaSyDsOUui-GnbX_NuXqkMbYc6ygXP1F5GRxw",
       appId: "1:1000815020441:android:6e67da7e136bf5abaceb08",
       messagingSenderId: "1000815020441",
       projectId: "tapmine-app",
@@ -1362,9 +1362,9 @@ class _TasksTabState extends State<TasksTab> {
     final nextStreakBonus =
         streakBonusTable[widget.streakCount % 7];
 
-    final adProgress =
-        widget.adsWatchedToday
-            .clamp(0, adMilestoneTarget);
+    final int adProgress = widget.adsWatchedToday
+        .clamp(0, adMilestoneTarget)
+        .toInt();
 
     return Stack(
       children: [
@@ -2721,7 +2721,7 @@ class _TaskCardNew extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(20),
               child: LinearProgressIndicator(
-                value: progress.clamp(0.0, 1.0).toDouble(),
+                value: progress!.clamp(0.0, 1.0).toDouble(),
                 minHeight: 5,
                 backgroundColor:
                     Colors.white.withOpacity(.06),
